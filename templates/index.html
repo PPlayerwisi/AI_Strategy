@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <title>
+      Faction Warfare RTS — Багатокористувацька Еволюційна Платформа
+    </title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <div id="left-pane">
+      <canvas id="board" width="700" height="700"></canvas>
+    </div>
+
+    <div id="right-pane">
+      <div class="box">
+        <div class="box-title">Профіль користувача</div>
+        <div class="profile-bar">
+          <input
+            type="text"
+            id="username-inp"
+            value="Daniil_Commander"
+            placeholder="Нікнейм..."
+          />
+          <button onclick="switchProfile()">Увійти</button>
+        </div>
+      </div>
+
+      <div class="box">
+        <div class="box-title">Телеметрія сесії та стан ШІ</div>
+        <div id="telemetry-text"></div>
+        <div id="gen-live-badge" class="gen-badge">
+          Активне покоління: Завантаження...
+        </div>
+        <div id="evo-banner"></div>
+      </div>
+
+      <div class="box">
+        <div class="box-title">Інспектор об'єкта</div>
+        <div id="inspector-text"></div>
+      </div>
+
+      <div class="box">
+        <div class="box-title">Керування підрозділами та будівництво</div>
+        <button
+          id="b-heal"
+          class="btn-act"
+          style="background: #10ac84"
+          onclick="sendAct('heal')"
+        >
+          Лікувати юніта (+25.00% макс. HP)
+        </button>
+        <button
+          id="b-harv"
+          class="btn-act"
+          style="background: #d35400"
+          onclick="sendAct('harvest')"
+        >
+          Додаткова обробка клітинки (+1.50x)
+        </button>
+        <button
+          id="b-tow"
+          class="btn-act"
+          style="background: #576574"
+          onclick="sendAct('build', null, null, 'tower')"
+        >
+          Звести оборонну вежу (4.00$)
+        </button>
+        <button
+          id="b-bar"
+          class="btn-act"
+          style="background: #576574"
+          onclick="sendAct('build', null, null, 'barracks')"
+        >
+          Звести передову казарму (5.00$)
+        </button>
+        <button
+          id="b-swk"
+          class="btn-act"
+          onclick="sendAct('spawn', null, null, 'worker')"
+        >
+          Найняти робітника (3.00$ | Утрим: 0.40$)
+        </button>
+        <button
+          id="b-swr"
+          class="btn-act"
+          onclick="sendAct('spawn', null, null, 'warrior')"
+        >
+          Найняти піхотинця (6.00$ | Утрим: 1.10$)
+        </button>
+        <button
+          id="b-sar"
+          class="btn-act"
+          onclick="sendAct('spawn', null, null, 'archer')"
+        >
+          Найняти стрільця (8.50$ | Утрим: 1.60$)
+        </button>
+      </div>
+
+      <button class="btn-act btn-stats" onclick="openStatsModal()">
+        Статистика ефективності (Графік та медіана)
+      </button>
+      <button class="btn-act btn-end" onclick="sendAct('end_turn')">
+        Кінець ходу (Авто-лікування та хід ШІ)
+      </button>
+    </div>
+
+    <div id="modal-overlay">
+      <div id="modal-card">
+        <div class="modal-header">
+          <span class="modal-title"
+            >Динаміка ефективності та медіана від початку партії</span
+          >
+          <button onclick="closeStatsModal()" class="btn-close">Закрити</button>
+        </div>
+        <div id="stats-summary"></div>
+        <canvas id="effChart" height="125"></canvas>
+      </div>
+    </div>
+
+    <script src="/static/game.js"></script>
+  </body>
+</html>

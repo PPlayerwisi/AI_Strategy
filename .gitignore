@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.png
+
+selfplay_pool/*.npz
+
+selfplay_pool/*.zip
+
+!selfplay_pool/generation_100.zip
+!selfplay_pool/generation_human_101_45.zip
