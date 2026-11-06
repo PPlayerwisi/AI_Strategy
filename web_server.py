@@ -4,10 +4,12 @@ import threading
 from typing import Optional
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 import numpy as np
+import zipfile
 
 from microrts_env import (
     MicroRTSEnv, PoolRegistry, OnlineEvolutionEngine,
@@ -454,6 +456,17 @@ def _check_and_handle_match_end(session: GameSession) -> bool:
 def serve_index():
     with open("templates/index.html", "r", encoding="utf-8") as f:
         return f.read()
+
+@app.get("/admin/export_models")
+def export_models_archive():
+    backup_path = os.path.join(POOL_DIR, "models_backup.zip")
+    with zipfile.ZipFile(backup_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in os.listdir(POOL_DIR):
+            if fname.endswith(".zip") and fname != "models_backup.zip":
+                zf.write(os.path.join(POOL_DIR, fname), arcname=fname)
+            elif fname in ["pool_registry.json", "users_db.json", "human_telemetry.npz"]:
+                zf.write(os.path.join(POOL_DIR, fname), arcname=fname)
+    return FileResponse(backup_path, filename="microrts_models_backup.zip", media_type="application/zip")
 
 if __name__ == "__main__":
     PoolRegistry.ensure_initialized()

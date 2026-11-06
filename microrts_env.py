@@ -1749,3 +1749,32 @@ class OnlineEvolutionEngine:
         )
         entry["w_gauntlet"] = round(w_gauntlet * 100.00, 2)
         return entry
+
+@staticmethod
+def enforce_pool_storage_limit(max_human_models: int = 25):
+    """Видаляє найслабші та найстаріші моделі при досягненні ліміту."""
+    PoolRegistry.ensure_initialized()
+    with REGISTRY_LOCK:
+        with open(POOL_REGISTRY_FILE, "r", encoding="utf-8") as f:
+            reg = json.load(f)
+        
+        human_gens = [g for g in reg["generations"] if str(g.get("origin", "")).startswith("player:")]
+        if len(human_gens) > max_human_models:
+            # Сортуємо: кандидати на видалення — з низьким рейтингом і найстаріші
+            sorted_by_priority = sorted(
+                human_gens, 
+                key=lambda g: (float(g.get("rating", 0.0)), int(g.get("created_at", 0)))
+            )
+            to_remove = sorted_by_priority[0]
+            
+            # Фізично видаляємо файл з диска
+            f_path = os.path.join(POOL_DIR, to_remove["filename"])
+            if os.path.exists(f_path):
+                try:
+                    os.remove(f_path)
+                except Exception:
+                    pass
+            
+            # Видаляємо запис із реєстру
+            reg["generations"] = [g for g in reg["generations"] if g["gen_id"] != to_remove["gen_id"]]
+            PoolRegistry._save_unlocked(reg)
