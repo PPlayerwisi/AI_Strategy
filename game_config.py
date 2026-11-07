@@ -1,0 +1,1 @@
+# File for easy access to everything, that need to be fast cofigurated in a process of developing, improving game.

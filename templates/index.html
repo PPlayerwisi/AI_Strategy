@@ -1,10 +1,8 @@
 <!doctype html>
-<html lang="uk">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>
-      Faction Warfare RTS — Багатокористувацька Еволюційна Платформа
-    </title>
+    <title>Faction Warfare RTS — Multi-User Evolutionary Platform</title>
     <link rel="stylesheet" href="/static/style.css" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
@@ -15,41 +13,52 @@
 
     <div id="right-pane">
       <div class="box">
-        <div class="box-title">Профіль користувача</div>
+        <div id="lbl-box-profile" class="box-title">USER PROFILE</div>
         <div class="profile-bar">
           <input
             type="text"
             id="username-inp"
-            value="Daniil_Commander"
-            placeholder="Нікнейм..."
+            value=""
+            placeholder="Username..."
           />
-          <button onclick="switchProfile()">Увійти</button>
+          <button id="btn-login" onclick="switchProfile()">Login</button>
+          <button
+            id="btn-lang"
+            style="background: #576574; color: #ffffff"
+            onclick="toggleLanguage()"
+          >
+            UK
+          </button>
         </div>
       </div>
 
       <div class="box">
-        <div class="box-title">Телеметрія сесії та стан ШІ</div>
+        <div id="lbl-box-telemetry" class="box-title">
+          SESSION TELEMETRY AND AI STATUS
+        </div>
         <div id="telemetry-text"></div>
         <div id="gen-live-badge" class="gen-badge">
-          Активне покоління: Завантаження...
+          Active Generation: Loading...
         </div>
         <div id="evo-banner"></div>
       </div>
 
       <div class="box">
-        <div class="box-title">Інспектор об'єкта</div>
+        <div id="lbl-box-inspector" class="box-title">OBJECT INSPECTOR</div>
         <div id="inspector-text"></div>
       </div>
 
       <div class="box">
-        <div class="box-title">Керування підрозділами та будівництво</div>
+        <div id="lbl-box-orders" class="box-title">
+          UNIT ORDERS AND CONSTRUCTION
+        </div>
         <button
           id="b-heal"
           class="btn-act"
           style="background: #10ac84"
           onclick="sendAct('heal')"
         >
-          Лікувати юніта (+25.00% макс. HP)
+          Heal Unit (+25.00% max HP)
         </button>
         <button
           id="b-harv"
@@ -57,7 +66,7 @@
           style="background: #d35400"
           onclick="sendAct('harvest')"
         >
-          Додаткова обробка клітинки (+1.50x)
+          Extra Tile Harvest (+1.50x)
         </button>
         <button
           id="b-tow"
@@ -65,7 +74,7 @@
           style="background: #576574"
           onclick="sendAct('build', null, null, 'tower')"
         >
-          Звести оборонну вежу (4.00$)
+          Build Defense Tower (4.00$)
         </button>
         <button
           id="b-bar"
@@ -73,46 +82,68 @@
           style="background: #576574"
           onclick="sendAct('build', null, null, 'barracks')"
         >
-          Звести передову казарму (5.00$)
+          Build Forward Barracks (5.00$)
+        </button>
+        <button
+          id="b-dem"
+          class="btn-act"
+          style="background: #8e44ad"
+          onclick="sendAct('demolish')"
+        >
+          Demolish Allied Structure (+50.00% refund)
+        </button>
+        <button
+          id="b-dis"
+          class="btn-act"
+          style="background: #c0392b"
+          onclick="sendAct('disband')"
+        >
+          Disband Selected Unit (+40.00% refund)
         </button>
         <button
           id="b-swk"
           class="btn-act"
           onclick="sendAct('spawn', null, null, 'worker')"
         >
-          Найняти робітника (3.00$ | Утрим: 0.40$)
+          Recruit Worker (3.00$ | Upkeep: 0.40$)
         </button>
         <button
           id="b-swr"
           class="btn-act"
           onclick="sendAct('spawn', null, null, 'warrior')"
         >
-          Найняти піхотинця (6.00$ | Утрим: 1.10$)
+          Recruit Warrior (6.00$ | Upkeep: 1.10$)
         </button>
         <button
           id="b-sar"
           class="btn-act"
           onclick="sendAct('spawn', null, null, 'archer')"
         >
-          Найняти стрільця (8.50$ | Утрим: 1.60$)
+          Recruit Archer (8.50$ | Upkeep: 1.60$)
         </button>
       </div>
 
-      <button class="btn-act btn-stats" onclick="openStatsModal()">
-        Статистика ефективності (Графік та медіана)
+      <button id="b-stats" class="btn-act btn-stats" onclick="openStatsModal()">
+        Efficiency Statistics (Chart and Median)
       </button>
-      <button class="btn-act btn-end" onclick="sendAct('end_turn')">
-        Кінець ходу (Авто-лікування та хід ШІ)
+      <button id="b-end" class="btn-act btn-end" onclick="sendAct('end_turn')">
+        End Turn (Auto-Heal and AI Turn)
       </button>
     </div>
 
     <div id="modal-overlay">
       <div id="modal-card">
         <div class="modal-header">
-          <span class="modal-title"
-            >Динаміка ефективності та медіана від початку партії</span
+          <span id="lbl-modal-title" class="modal-title"
+            >Efficiency Growth Dynamics and Median from Match Start</span
           >
-          <button onclick="closeStatsModal()" class="btn-close">Закрити</button>
+          <button
+            id="btn-modal-close"
+            onclick="closeStatsModal()"
+            class="btn-close"
+          >
+            Close
+          </button>
         </div>
         <div id="stats-summary"></div>
         <canvas id="effChart" height="125"></canvas>

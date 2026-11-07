@@ -1,9 +1,123 @@
 let currentUser = "";
+let currentLang = "en";
 let state = null;
 let cellSize = 36.0;
 let camX = 26.0, camY = 26.0;
 let isPanning = false, panStartX = 0, panStartY = 0;
 let chartInstance = null;
+
+const UI_LOC = {
+  en: {
+    boxProfile: "USER PROFILE",
+    placeholderUser: "Username...",
+    btnLogin: "Login",
+    btnLangToggle: "UK",
+    boxTelemetry: "SESSION TELEMETRY AND AI STATUS",
+    boxInspector: "OBJECT INSPECTOR",
+    boxOrders: "UNIT ORDERS AND CONSTRUCTION",
+    btnHeal: "Heal Unit (+25.00% max HP)",
+    btnHarv: "Extra Tile Harvest (+1.50x)",
+    btnTow: "Build Defense Tower (4.00$)",
+    btnBar: "Build Forward Barracks (5.00$)",
+    btnDem: "Demolish Allied Structure (+50.00% refund)",
+    btnDis: "Disband Selected Unit (+40.00% refund)",
+    btnSwk: "Recruit Worker (3.00$ | Upkeep: 0.40$)",
+    btnSwr: "Recruit Warrior (6.00$ | Upkeep: 1.10$)",
+    btnSar: "Recruit Archer (8.50$ | Upkeep: 1.60$)",
+    btnStats: "Efficiency Statistics (Chart and Median)",
+    btnEnd: "End Turn (Auto-Heal and AI Turn)",
+    modalTitle: "Efficiency Growth Dynamics and Median from Match Start",
+    btnClose: "Close",
+    playerLabel: "Player",
+    matchLabel: "Match",
+    turnLabel: "Turn",
+    winrateLabel: "Profile Winrate",
+    poolModelsLabel: "Pool Models",
+    maxLabel: "Max",
+    blueLabel: "BLUE (YOU)",
+    redLabel: "RED (AI)  ",
+    goldLabel: "Gold",
+    landLabel: "Land",
+    armyLabel: "Army",
+    upkeepLabel: "Upkeep",
+    netLabel: "Net",
+    perTurn: "/t",
+    activeGenPrefix: "Active AI",
+    ratingLabel: "Rating",
+    baseLabel: "Base",
+    evoTraining: "[Evolution] Training new generation on elite units >=100 eff",
+    evoSamples: "samples",
+    evoAdded: "[Pool] Added",
+    evoDoc: "Doctrine",
+    towerShort: "TW ",
+    barracksShort: "BR ",
+    aiCastleShort: "AI CST",
+    yourCastleShort: "YOUR CST",
+    statsPlayerCurr: "Your Faction Current Efficiency",
+    statsAiCurr: "AI Current Efficiency",
+    medianWord: "Median",
+    chartTurn: "Turn",
+    chartPlayerEff: "Player Efficiency (Blue)",
+    chartPlayerMed: "Player Median",
+    chartAiEff: "AI Efficiency (Red)",
+    chartAiMed: "AI Median"
+  },
+  uk: {
+    boxProfile: "ПРОФІЛЬ КОРИСТУВАЧА",
+    placeholderUser: "Нікнейм...",
+    btnLogin: "Увійти",
+    btnLangToggle: "EN",
+    boxTelemetry: "ТЕЛЕМЕТРІЯ СЕСІЇ ТА СТАН ШІ",
+    boxInspector: "ІНСПЕКТОР ОБ'ЄКТА",
+    boxOrders: "КЕРУВАННЯ ПІДРОЗДІЛАМИ ТА БУДІВНИЦТВО",
+    btnHeal: "Лікувати юніта (+25.00% макс. HP)",
+    btnHarv: "Додаткова обробка клітинки (+1.50x)",
+    btnTow: "Звести оборонну вежу (4.00$)",
+    btnBar: "Звести передову казарму (5.00$)",
+    btnDem: "Знести союзну споруду (+50.00% повернення)",
+    btnDis: "Розпустити обраного юніта (+40.00% повернення)",
+    btnSwk: "Найняти робітника (3.00$ | Утрим: 0.40$)",
+    btnSwr: "Найняти піхотинця (6.00$ | Утрим: 1.10$)",
+    btnSar: "Найняти стрільця (8.50$ | Утрим: 1.60$)",
+    btnStats: "Статистика ефективності (Графік та медіана)",
+    btnEnd: "Кінець ходу (Авто-лікування та хід ШІ)",
+    modalTitle: "Динаміка ефективності та медіана від початку партії",
+    btnClose: "Закрити",
+    playerLabel: "Гравець",
+    matchLabel: "Партія",
+    turnLabel: "Хід",
+    winrateLabel: "Вінрейт профілю",
+    poolModelsLabel: "Моделей у пулі",
+    maxLabel: "Макс",
+    blueLabel: "СИНІ (ВИ) ",
+    redLabel: "ЧЕРВОНІ ШІ",
+    goldLabel: "Казна",
+    landLabel: "Землі",
+    armyLabel: "Армія",
+    upkeepLabel: "Утрим",
+    netLabel: "Баланс",
+    perTurn: "/х",
+    activeGenPrefix: "Зараз грає",
+    ratingLabel: "Рейтинг",
+    baseLabel: "Базовий",
+    evoTraining: "[Еволюція] Навчання нового покоління на еліті >=100 еф.",
+    evoSamples: "зразків",
+    evoAdded: "[Пул] Додано",
+    evoDoc: "Доктрина",
+    towerShort: "ВЖ ",
+    barracksShort: "КЗ ",
+    aiCastleShort: "ЗМ ШІ",
+    yourCastleShort: "ВАШ ЗМ",
+    statsPlayerCurr: "Поточна ефективність Вашої Фракції",
+    statsAiCurr: "Поточна ефективність ШІ",
+    medianWord: "Медіана",
+    chartTurn: "Хід",
+    chartPlayerEff: "Ефективність Гравця (Сині)",
+    chartPlayerMed: "Медіана Гравця",
+    chartAiEff: "Ефективність Нейромережі (Червоні)",
+    chartAiMed: "Медіана ШІ"
+  }
+};
 
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
@@ -72,8 +186,39 @@ canvas.addEventListener("wheel", e => {
   drawBoard();
 });
 
+function applyStaticLabels() {
+  const t = UI_LOC[currentLang] || UI_LOC.en;
+  document.getElementById("lbl-box-profile").textContent = t.boxProfile;
+  document.getElementById("username-inp").placeholder = t.placeholderUser;
+  document.getElementById("btn-login").textContent = t.btnLogin;
+  document.getElementById("btn-lang").textContent = t.btnLangToggle;
+  document.getElementById("lbl-box-telemetry").textContent = t.boxTelemetry;
+  document.getElementById("lbl-box-inspector").textContent = t.boxInspector;
+  document.getElementById("lbl-box-orders").textContent = t.boxOrders;
+  document.getElementById("b-heal").textContent = t.btnHeal;
+  document.getElementById("b-harv").textContent = t.btnHarv;
+  document.getElementById("b-tow").textContent = t.btnTow;
+  document.getElementById("b-bar").textContent = t.btnBar;
+  document.getElementById("b-dem").textContent = t.btnDem;
+  document.getElementById("b-dis").textContent = t.btnDis;
+  document.getElementById("b-swk").textContent = t.btnSwk;
+  document.getElementById("b-swr").textContent = t.btnSwr;
+  document.getElementById("b-sar").textContent = t.btnSar;
+  document.getElementById("b-stats").textContent = t.btnStats;
+  document.getElementById("b-end").textContent = t.btnEnd;
+  document.getElementById("lbl-modal-title").textContent = t.modalTitle;
+  document.getElementById("btn-modal-close").textContent = t.btnClose;
+}
+
+async function toggleLanguage() {
+  const nextLang = currentLang === "en" ? "uk" : "en";
+  currentLang = nextLang;
+  applyStaticLabels();
+  await sendAct("set_lang", null, null, currentLang);
+}
+
 async function switchProfile() {
-  currentUser = document.getElementById("username-inp").value.trim() || "Commander";
+  currentUser = document.getElementById("username-inp").value.trim() || "Guest1";
   await fetchState();
 }
 
@@ -82,13 +227,17 @@ async function fetchState() {
     const res = await fetch("/api/state", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: currentUser, action_type: "get" })
+      body: JSON.stringify({ username: currentUser, action_type: "get", param: currentLang })
     });
     if (!res.ok) throw new Error("HTTP error " + res.status);
     state = await res.json();
+    if (state.lang && (state.lang === "en" || state.lang === "uk")) {
+      currentLang = state.lang;
+      applyStaticLabels();
+    }
     updateUI();
   } catch (err) {
-    console.error("Помилка завантаження стану:", err);
+    console.error("State load error:", err);
   }
 }
 
@@ -103,24 +252,25 @@ async function sendAct(action_type, r = null, c = null, param = null) {
     state = await res.json();
     updateUI();
   } catch (err) {
-    console.error("Помилка виконання дії:", err);
+    console.error("Action execution error:", err);
   }
 }
 
 function updateUI() {
   if (!state) return;
+  const t = UI_LOC[currentLang] || UI_LOC.en;
 
   document.getElementById("telemetry-text").textContent =
-    `Гравець: ${state.username} | Партія: #${state.matches_played + 1} | Хід: ${state.turn}/${state.max_turns}\n` +
-    `Вінрейт профілю: ${state.winrate.toFixed(2)}% | Моделей у пулі: ${state.pool_size} (Макс: ${state.pool_max_rating.toFixed(2)})\n` +
+    `${t.playerLabel}: ${state.username} | ${t.matchLabel}: #${state.matches_played + 1} | ${t.turnLabel}: ${state.turn}/${state.max_turns}\n` +
+    `${t.winrateLabel}: ${state.winrate.toFixed(2)}% | ${t.poolModelsLabel}: ${state.pool_size} (${t.maxLabel}: ${state.pool_max_rating.toFixed(2)})\n` +
     `----------------------------------------------------\n` +
-    `СИНІ (ВИ) : Казна ${state.p2.gold.toFixed(2)}$ | Землі: ${state.p2.tiles} (+${state.p2.inc.toFixed(2)}$)\n` +
-    `            Армія: ${state.p2.army} (Утрим: -${state.p2.upk.toFixed(2)}$) | Баланс: ${state.p2.net >= 0 ? '+' : ''}${state.p2.net.toFixed(2)}$/х\n` +
-    `ЧЕРВОНІ ШІ: Казна ${state.p1.gold.toFixed(2)}$ | Землі: ${state.p1.tiles} (+${state.p1.inc.toFixed(2)}$)\n` +
-    `            Армія: ${state.p1.army} (Утрим: -${state.p1.upk.toFixed(2)}$) | Баланс: ${state.p1.net >= 0 ? '+' : ''}${state.p1.net.toFixed(2)}$/х`;
+    `${t.blueLabel}: ${t.goldLabel} ${state.p2.gold.toFixed(2)}$ | ${t.landLabel}: ${state.p2.tiles} (+${state.p2.inc.toFixed(2)}$)\n` +
+    `            ${t.armyLabel}: ${state.p2.army} (${t.upkeepLabel}: -${state.p2.upk.toFixed(2)}$) | ${t.netLabel}: ${state.p2.net >= 0 ? '+' : ''}${state.p2.net.toFixed(2)}$${t.perTurn}\n` +
+    `${t.redLabel}: ${t.goldLabel} ${state.p1.gold.toFixed(2)}$ | ${t.landLabel}: ${state.p1.tiles} (+${state.p1.inc.toFixed(2)}$)\n` +
+    `            ${t.armyLabel}: ${state.p1.army} (${t.upkeepLabel}: -${state.p1.upk.toFixed(2)}$) | ${t.netLabel}: ${state.p1.net >= 0 ? '+' : ''}${state.p1.net.toFixed(2)}$${t.perTurn}`;
 
   document.getElementById("gen-live-badge").textContent =
-    `Зараз грає: ${state.active_gen_label} | Рейтинг: ${state.active_rating.toFixed(2)} (Базовий: ${state.base_rating.toFixed(2)})`;
+    `${t.activeGenPrefix}: ${state.active_gen_label} | ${t.ratingLabel}: ${state.active_rating.toFixed(2)} (${t.baseLabel}: ${state.base_rating.toFixed(2)})`;
 
   const evoEl = document.getElementById("evo-banner");
   let logLines = [];
@@ -130,9 +280,10 @@ function updateUI() {
   if (state.last_evolution_report) {
     const rep = state.last_evolution_report;
     if (rep.status === "training") {
-      logLines.push(`[Еволюція] Навчання нового покоління (${rep.samples} зразків)...`);
+      logLines.push(`${t.evoTraining} (${rep.samples} ${t.evoSamples})...`);
     } else if (rep.status === "completed") {
-      logLines.push(`[Пул] Додано ${rep.new_gen_label} | Рейтинг: ${rep.new_gen_rating.toFixed(2)}`);
+      const docVal = rep.doctrine_alignment !== undefined ? rep.doctrine_alignment.toFixed(2) : "100.00";
+      logLines.push(`${t.evoAdded} ${rep.new_gen_label} | ${t.ratingLabel}: ${rep.new_gen_rating.toFixed(2)} | ${t.evoDoc}: ${docVal}%`);
     }
   }
   evoEl.textContent = logLines.join("\n");
@@ -142,6 +293,8 @@ function updateUI() {
   document.getElementById("b-harv").disabled = !state.inspector.can_harvest;
   document.getElementById("b-tow").disabled = !state.inspector.can_build_tower;
   document.getElementById("b-bar").disabled = !state.inspector.can_build_barracks;
+  document.getElementById("b-dem").disabled = !state.inspector.can_demolish;
+  document.getElementById("b-dis").disabled = !state.inspector.can_disband;
   document.getElementById("b-swk").disabled = !state.inspector.can_spawn_worker;
   document.getElementById("b-swr").disabled = !state.inspector.can_spawn_warrior;
   document.getElementById("b-sar").disabled = !state.inspector.can_spawn_archer;
@@ -190,6 +343,7 @@ function drawUnitIcon(cx, cy, rad, uType, faction) {
 
 function drawBoard() {
   if (!state) return;
+  const t = UI_LOC[currentLang] || UI_LOC.en;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const cs = cellSize, ox = camX, oy = camY, boardPx = 18 * cs;
 
@@ -236,12 +390,12 @@ function drawBoard() {
     ctx.strokeRect(x + cs * 0.14, y + cs * 0.22, cs * 0.72, cs * 0.66);
     ctx.fillStyle = "#fff";
     ctx.font = `bold ${Math.max(8, Math.floor(cs * 0.19))}px Arial`;
-    ctx.fillText((st.type === 1 ? "ВЖ " : "КЗ ") + st.hp.toFixed(0), x + cs * 0.20, y + cs * 0.60);
+    ctx.fillText((st.type === 1 ? t.towerShort : t.barracksShort) + st.hp.toFixed(0), x + cs * 0.18, y + cs * 0.60);
   }
 
   const castles = [
-    { r: 17, c: 0, hp: state.p1.castle_hp, col: "#83142c", lbl: "ЗМ ШІ" },
-    { r: 0, c: 17, hp: state.p2.castle_hp, col: "#0a3d62", lbl: "ВАШ ЗМ" }
+    { r: 17, c: 0, hp: state.p1.castle_hp, col: "#83142c", lbl: t.aiCastleShort },
+    { r: 0, c: 17, hp: state.p2.castle_hp, col: "#0a3d62", lbl: t.yourCastleShort }
   ];
   for (const csObj of castles) {
     const x = ox + csObj.c * cs, y = oy + csObj.r * cs;
@@ -251,11 +405,10 @@ function drawBoard() {
     ctx.lineWidth = 2;
     ctx.strokeRect(x + 2, y + 4, cs - 4, cs - 6);
     ctx.fillStyle = "#feca57";
-    ctx.font = `bold ${Math.max(8, Math.floor(cs * 0.18))}px Arial`;
-    ctx.fillText(`${csObj.lbl} ${csObj.hp.toFixed(0)}`, x + 4, y + cs * 0.75);
+    ctx.font = `bold ${Math.max(7, Math.floor(cs * 0.16))}px Arial`;
+    ctx.fillText(`${csObj.lbl} ${csObj.hp.toFixed(0)}`, x + 3, y + cs * 0.75);
   }
 
-  // Візуалізація траєкторій останнього ходу ШІ (пунктирні лінії)
   if (state.ai_traces) {
     for (const tr of state.ai_traces) {
       const x1 = ox + tr.from[1] * cs + cs * 0.5;
@@ -278,7 +431,6 @@ function drawBoard() {
     }
   }
 
-  // Жовті клітинки можливого ходу обраного юніта
   for (const [mr, mc] of state.valid_moves) {
     const x = ox + mc * cs, y = oy + mr * cs;
     ctx.strokeStyle = "#f1c40f";
@@ -290,7 +442,6 @@ function drawBoard() {
     ctx.fill();
   }
 
-  // Фіолетові клітинки цілей для атаки
   for (const [tr, tc] of state.valid_attacks) {
     const x = ox + tc * cs, y = oy + tr * cs;
     ctx.strokeStyle = "#e056fd";
@@ -298,14 +449,13 @@ function drawBoard() {
     ctx.strokeRect(x + 2, y + 2, cs - 4, cs - 4);
   }
 
-  // Малювання юнітів
   for (const u of state.units) {
     const cx = ox + u.c * cs + cs * 0.5, cy = oy + u.r * cs + cs * 0.48, rad = cs * 0.34;
     ctx.fillStyle = u.faction === 1 ? "#eb3b5a" : "#0fbcf9";
     ctx.beginPath();
     ctx.arc(cx, cy, rad, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = (u.faction === 2 && u.ready) ? "#2ecc71" : "#dcdde1";
+    ctx.strokeStyle = (u.faction === 2 && u.ready) ? "#2ecc71" : (u.efficiency >= 100.0 ? "#feca57" : "#dcdde1");
     ctx.lineWidth = 2;
     ctx.stroke();
     drawUnitIcon(cx, cy, rad, u.type, u.faction);
@@ -317,7 +467,6 @@ function drawBoard() {
     ctx.fillRect(cx - bw / 2, cy + rad + 1, bw * (u.hp / u.max_hp), bh);
   }
 
-  // Рамка обраної клітинки
   if (state.selected_pos) {
     const [sr, sc] = state.selected_pos;
     ctx.strokeStyle = "#00d2d3";
@@ -328,11 +477,12 @@ function drawBoard() {
 
 function openStatsModal() {
   if (!state || !state.stats) return;
+  const t = UI_LOC[currentLang] || UI_LOC.en;
   document.getElementById("modal-overlay").style.display = "flex";
   const st = state.stats;
   document.getElementById("stats-summary").textContent =
-    `Поточна ефективність Вашої Фракції: ${st.player_current.toFixed(2)} (Медіана: ${st.player_median.toFixed(2)}) | ` +
-    `Поточна ефективність ШІ: ${st.ai_current.toFixed(2)} (Медіана: ${st.ai_median.toFixed(2)})`;
+    `${t.statsPlayerCurr}: ${st.player_current.toFixed(2)} (${t.medianWord}: ${st.player_median.toFixed(2)}) | ` +
+    `${t.statsAiCurr}: ${st.ai_current.toFixed(2)} (${t.medianWord}: ${st.ai_median.toFixed(2)})`;
 
   const pMedLine = st.turns.map(() => st.player_median);
   const aiMedLine = st.turns.map(() => st.ai_median);
@@ -342,12 +492,12 @@ function openStatsModal() {
   chartInstance = new Chart(cctx, {
     type: "line",
     data: {
-      labels: st.turns.map(t => `Хід ${t}`),
+      labels: st.turns.map(turnNum => `${t.chartTurn} ${turnNum}`),
       datasets: [
-        { label: "Ефективність Гравця (Сині)", data: st.player_eff, borderColor: "#0fbcf9", borderWidth: 2.5, tension: 0.2 },
-        { label: `Медіана Гравця (${st.player_median.toFixed(2)})`, data: pMedLine, borderColor: "#0fbcf9", borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 },
-        { label: "Ефективність Нейромережі (Червоні)", data: st.ai_eff, borderColor: "#eb3b5a", borderWidth: 2.5, tension: 0.2 },
-        { label: `Медіана ШІ (${st.ai_median.toFixed(2)})`, data: aiMedLine, borderColor: "#eb3b5a", borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 }
+        { label: t.chartPlayerEff, data: st.player_eff, borderColor: "#0fbcf9", borderWidth: 2.5, tension: 0.2 },
+        { label: `${t.chartPlayerMed} (${st.player_median.toFixed(2)})`, data: pMedLine, borderColor: "#0fbcf9", borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 },
+        { label: t.chartAiEff, data: st.ai_eff, borderColor: "#eb3b5a", borderWidth: 2.5, tension: 0.2 },
+        { label: `${t.chartAiMed} (${st.ai_median.toFixed(2)})`, data: aiMedLine, borderColor: "#eb3b5a", borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 }
       ]
     },
     options: {
@@ -370,17 +520,13 @@ async function initApp() {
     const res = await fetch("/api/init_user");
     if (!res.ok) throw new Error("HTTP error " + res.status);
     const data = await res.json();
-    
-    // Автоматично присвоєний або збережений нікнейм для цього IP
     currentUser = data.username;
-    
-    // Оновлюємо поле вводу
+    currentLang = data.lang || "en";
     document.getElementById("username-inp").value = currentUser;
-    
-    // Завантажуємо ігрову дошку
+    applyStaticLabels();
     await fetchState();
   } catch (err) {
-    console.error("Помилка ініціалізації гостя:", err);
+    console.error("Guest init error:", err);
   }
 }
 

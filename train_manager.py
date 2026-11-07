@@ -9,40 +9,39 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from stable_baselines3 import PPO
-from microrts_env import MicroRTSEnv, POOL_DIR, HUMAN_TELEMETRY_FILE, predict_masked_action
+
+from game_config import POOL_DIR, HUMAN_TELEMETRY_FILE, MIN_TRAINING_EFFICIENCY
+from microrts_env import MicroRTSEnv, GLOBAL_MODEL_CACHE, predict_masked_action
 
 STATE_FILE = os.path.join(POOL_DIR, "training_state.json")
 LATEST_MODEL_PATH = os.path.join(POOL_DIR, "latest_checkpoint.zip")
 
 TOTAL_GENERATIONS = 100
-STEPS_PER_GEN = 20000                      # 20 000 кроків на кожне покоління (разом 2 000 000 кроків)
+STEPS_PER_GEN = 20000
 TOTAL_PIPELINE_STEPS = TOTAL_GENERATIONS * STEPS_PER_GEN
 
 def get_tier_for_generation(gen_idx: int) -> tuple:
-    """
-    Визначає еволюційний ступінь (Tier 1..5) та опис навичок для конкретного покоління (0..100).
-    """
     if gen_idx <= 15:
-        return 1, "Ступінь 1 (Покоління 0-15): Базовий рух та простий бій (рівень для новачків)"
+        return 1, "Tier 1 (Gen 0-15): Basic movement and combat fundamentals"
     elif gen_idx <= 35:
-        return 2, "Ступінь 2 (Покоління 16-35): Рання експансія 18x18, зачистка сірих клітинок, тилові робітники"
+        return 2, "Tier 2 (Gen 16-35): Early 18x18 resource cluster rush and expansion"
     elif gen_idx <= 55:
-        return 3, "Ступінь 3 (Покоління 36-55): Контроль перешийків (2 проти 1), переслідування, вежі без блокування"
+        return 3, "Tier 3 (Gen 36-55): Chokepoint control, forward barracks, and non-blocking towers"
     elif gen_idx <= 75:
-        return 4, "Ступінь 4 (Покоління 56-75): Глибинний радар загроз, захист казни, зв'язки Піхота+Стрільці"
+        return 4, "Tier 4 (Gen 56-75): Firepower radar, treasury protection, and coordinated roles"
     else:
-        return 5, "Ступінь 5 (Покоління 76-100): Заманювання під вежі vs Розрахунок жертви + Досвід реальних гравців"
+        return 5, "Tier 5 (Gen 76-100): Grandmaster tactics + Validated Elite Human Telemetry (>=100 eff)"
 
 class TrainingController:
     def __init__(self):
         self.stop_requested = False
-        self.status_text = "Ініціалізація еволюційного тренування..."
+        self.status_text = "Initializing evolutionary training..."
         self.tier_text = ""
         self.progress_pct = 0.00
 
     def request_stop(self):
         self.stop_requested = True
-        self.status_text = "Отримано сигнал зупинки! Безпечно зберігаємо ваги нейромережі..."
+        self.status_text = "Stop signal received! Safely saving neural network weights..."
 
     @staticmethod
     def load_state():
@@ -66,11 +65,7 @@ class TrainingController:
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
 
-def train_on_human_telemetry(model: PPO, optimizer: optim.Optimizer) -> float:
-    """
-    Навчає нейромережу на збережених ходах найефективніших юнітів із реальних партій гравця.
-    Кожен хід зважується на індивідуальний показник ефективності юніта (weights).
-    """
+def train_on_human_telemetry(model: PPO, optimizer: optim.Optimizer, env: MicroRTSEnv) -> float:
     if not os.path.exists(HUMAN_TELEMETRY_FILE):
         return 0.00
     try:
@@ -84,37 +79,58 @@ def train_on_human_telemetry(model: PPO, optimizer: optim.Optimizer) -> float:
         batch_size = min(128, len(obs_arr))
         indices = np.random.choice(len(obs_arr), size=batch_size, replace=False)
 
-        obs_t = torch.as_tensor(obs_arr[indices], dtype=torch.float32, device=model.device)
-        acts_t = torch.as_tensor(acts_arr[indices], dtype=torch.long, device=model.device)
-        weights_t = torch.as_tensor(weights_arr[indices], dtype=torch.float32, device=model.device)
+        b_obs = obs_arr[indices]
+        b_acts = acts_arr[indices]
+        b_weights = weights_arr[indices]
+        doc_scores = [env.evaluate_sample_doctrine_compliance(o, int(a)) for o, a in zip(b_obs, b_acts)]
+
+        obs_t = torch.as_tensor(b_obs, dtype=torch.float32, device=model.device)
+        acts_t = torch.as_tensor(b_acts, dtype=torch.long, device=model.device)
+        weights_t = torch.as_tensor(b_weights, dtype=torch.float32, device=model.device)
+        doc_t = torch.as_tensor(doc_scores, dtype=torch.float32, device=model.device)
+
+        gen100_path = os.path.join(POOL_DIR, "generation_100.zip")
+        gen100_model = GLOBAL_MODEL_CACHE.get_model(gen100_path)
+        if gen100_model is not None:
+            with torch.no_grad():
+                g100_dist = gen100_model.policy.get_distribution(obs_t)
+                g100_acts_t = torch.argmax(g100_dist.distribution.logits, dim=-1)
+        else:
+            g100_acts_t = acts_t
 
         dist = model.policy.get_distribution(obs_t)
         logits = dist.distribution.logits
-        ce_loss = nn.CrossEntropyLoss(reduction='none')(logits, acts_t)
-        weighted_loss = torch.mean(ce_loss * weights_t)
+        ce_loss_fn = nn.CrossEntropyLoss(reduction='none')
+        ce_human = ce_loss_fn(logits, acts_t)
+        ce_g100 = ce_loss_fn(logits, g100_acts_t)
+        entropy = dist.entropy().mean()
+
+        hybrid_loss = torch.mean(
+            (doc_t * weights_t * ce_human) + ((1.00 - doc_t) * 2.50 * ce_g100)
+        ) - (0.02 * entropy)
 
         optimizer.zero_grad()
-        weighted_loss.backward()
+        hybrid_loss.backward()
         optimizer.step()
-        return float(weighted_loss.item())
+        return float(hybrid_loss.item())
     except Exception:
         return 0.00
 
 def run_evolutionary_training(controller: TrainingController):
     os.makedirs(POOL_DIR, exist_ok=True)
-    env = MicroRTSEnv(mode="selfplay")
+    env = MicroRTSEnv(mode="selfplay", lang="en")
     state = TrainingController.load_state()
 
     if os.path.exists(LATEST_MODEL_PATH):
         try:
-            print(f"[*] Відновлення нейромережі з чекпоїнта {LATEST_MODEL_PATH}...")
+            print(f"[*] Resuming neural network from checkpoint {LATEST_MODEL_PATH}...")
             model = PPO.load(LATEST_MODEL_PATH, env=env, verbose=0)
         except Exception:
-            print("[*] Створення нової архітектури нейромережі PPO під мапу 18x18 (18 каналів, 30 дій)...")
+            print("[*] Creating new PPO neural network for 18x18 map (18 channels, 30 actions)...")
             model = PPO("MlpPolicy", env, verbose=0, learning_rate=0.0003, n_steps=1024, batch_size=256, ent_coef=0.02)
             state = {"current_gen": 0, "steps_in_gen": 0, "total_steps_done": 0, "last_loss": 0.00}
     else:
-        print("[*] Створення нової нейромережі PPO під мапу 18x18...")
+        print("[*] Creating new PPO neural network for 18x18 map...")
         model = PPO("MlpPolicy", env, verbose=0, learning_rate=0.0003, n_steps=1024, batch_size=256, ent_coef=0.02)
 
     optimizer = optim.Adam(model.policy.parameters(), lr=0.0006)
@@ -139,14 +155,13 @@ def run_evolutionary_training(controller: TrainingController):
         guided_cutoff = int(STEPS_PER_GEN * (0.75 if tier < 5 else 0.45))
 
         for s in range(step_start + 1, STEPS_PER_GEN + 1):
-            # Кожні 50 кроків підмішуємо досвід високоефективних юнітів із телеметрії реальних ігор
             if gen_idx >= 16 and s % 50 == 0:
-                train_on_human_telemetry(model, optimizer)
+                train_on_human_telemetry(model, optimizer, env)
 
             kind, pos, mask = env.get_current_p1_entity_and_mask()
 
             if s <= guided_cutoff:
-                target_act = env.get_strategic_teacher_action(kind, pos, faction=1, tier=tier)
+                target_act = env.get_strategic_teacher_action(kind, pos, faction=1, tier=tier, precomputed_mask=mask)
                 obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=model.device).unsqueeze(0)
                 target_tensor = torch.tensor([target_act], dtype=torch.long, device=model.device)
 
@@ -159,20 +174,22 @@ def run_evolutionary_training(controller: TrainingController):
                 optimizer.step()
                 running_loss = 0.99 * running_loss + 0.01 * float(loss.item())
 
-                chosen_act = predict_masked_action(model, obs, mask, deterministic=False)
+                priors = env._compute_strategic_logit_prior(kind, pos, 1, mask)
+                chosen_act = predict_masked_action(model, obs, mask, deterministic=False, logit_priors=priors)
                 obs, _, done, _, info = env.step(chosen_act)
                 if done:
-                    # Зберігаємо ходи високоефективних юнітів із зіграної партії
                     w_fac = 1 if info.get("winner") == "p1" else 2
-                    env.export_high_efficiency_telemetry(winning_faction=w_fac, min_efficiency=5.50)
+                    env.export_high_efficiency_telemetry(winning_faction=w_fac, min_efficiency=MIN_TRAINING_EFFICIENCY)
                     obs, _ = env.reset()
-                mode_label = f"Навчання навичок Ступеня {tier}"
+                mode_label = f"Guided Doctrine Training (Tier {tier})"
             else:
                 obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=model.device).unsqueeze(0)
                 dist = model.policy.get_distribution(obs_tensor)
                 logits = dist.distribution.logits[0]
+                priors = env._compute_strategic_logit_prior(kind, pos, 1, mask)
+                prior_t = torch.as_tensor(priors, dtype=torch.float32, device=model.device)
                 mask_tensor = torch.as_tensor(mask, dtype=torch.bool, device=model.device)
-                masked_logits = logits.clone()
+                masked_logits = logits.clone() + prior_t
                 masked_logits[~mask_tensor] = -1e8
                 probs = torch.softmax(masked_logits, dim=-1)
                 m = torch.distributions.Categorical(probs)
@@ -189,36 +206,36 @@ def run_evolutionary_training(controller: TrainingController):
                 obs = next_obs
                 if done:
                     w_fac = 1 if info.get("winner") == "p1" else 2
-                    env.export_high_efficiency_telemetry(winning_faction=w_fac, min_efficiency=5.50)
+                    env.export_high_efficiency_telemetry(winning_faction=w_fac, min_efficiency=MIN_TRAINING_EFFICIENCY)
                     obs, _ = env.reset()
-                mode_label = "Вільне плавання (Autonomous RL + Human Pool)"
+                mode_label = "Autonomous RL + Validated Human Pool"
 
             total_done += 1
             controller.progress_pct = (total_done / float(TOTAL_PIPELINE_STEPS)) * 100.00
             controller.status_text = (
-                f"Покоління: {gen_idx}/{TOTAL_GENERATIONS} | Крок у поколінні: {s}/{STEPS_PER_GEN}\n"
-                f"Режим: {mode_label} | Загальний прогрес: {controller.progress_pct:.2f}% | Loss: {running_loss:.2f}"
+                f"Generation: {gen_idx}/{TOTAL_GENERATIONS} | Step: {s}/{STEPS_PER_GEN}\n"
+                f"Mode: {mode_label} | Progress: {controller.progress_pct:.2f}% | Loss: {running_loss:.2f}"
             )
 
             if s % 2500 == 0:
                 model.save(LATEST_MODEL_PATH)
                 TrainingController.save_state(gen_idx, s, total_done, running_loss)
-                print(f"[Покоління {gen_idx:3d}] Крок {s:5d}/{STEPS_PER_GEN} ({controller.progress_pct:.2f}%) | {mode_label}")
+                print(f"[Gen {gen_idx:3d}] Step {s:5d}/{STEPS_PER_GEN} ({controller.progress_pct:.2f}%) | {mode_label}")
 
             if controller.stop_requested:
                 model.save(LATEST_MODEL_PATH)
                 model.save(os.path.join(POOL_DIR, f"generation_{gen_idx}"))
                 TrainingController.save_state(gen_idx, s, total_done, running_loss)
-                print(f"\n[!] Навчання безпечно збережено на поколінні {gen_idx} (крок {s}). Можна вимикати ПК.")
+                print(f"\n[!] Training safely saved at generation {gen_idx} (step {s}).")
                 return
 
         gen_path = os.path.join(POOL_DIR, f"generation_{gen_idx}")
         model.save(gen_path)
         model.save(LATEST_MODEL_PATH)
         TrainingController.save_state(gen_idx + 1, 0, total_done, running_loss)
-        print(f"[*] Сформовано та збережено Покоління {gen_idx} -> generation_{gen_idx}.zip ({tier_desc})")
+        print(f"[*] Saved Generation {gen_idx} -> generation_{gen_idx}.zip ({tier_desc})")
 
-    controller.status_text = "Усі 100 поколінь нейромережі успішно сформовані!"
+    controller.status_text = "All 100 neural network generations successfully trained!"
 
 def start_gui_and_training():
     controller = TrainingController()
@@ -228,11 +245,11 @@ def start_gui_and_training():
     train_thread.start()
 
     root = tk.Tk()
-    root.title("Faction RTS AI (18x18) — Еволюційний Менеджер Навчання (Покоління 0..100)")
+    root.title("Faction RTS AI (18x18) — Evolutionary Training Manager (Gen 0..100)")
     root.geometry("660x270")
     root.resizable(False, False)
 
-    tk.Label(root, text="Поетапна Еволюція Нейромережі (18x18) + Досвід Юнітів Гравця", font=("Arial", 12, "bold")).pack(pady=10)
+    tk.Label(root, text="Evolutionary Neural Network Training (18x18) + Validated Human Pool", font=("Arial", 12, "bold")).pack(pady=10)
     lbl_tier = tk.Label(root, text="", font=("Arial", 9, "bold"), fg="#2980b9", wraplength=620)
     lbl_tier.pack(pady=4)
 
@@ -243,11 +260,11 @@ def start_gui_and_training():
     progress_bar.pack(pady=8)
 
     def on_save_and_stop():
-        btn_stop.config(state="disabled", text="Збереження ваг моделі... Зачекайте")
+        btn_stop.config(state="disabled", text="Saving model weights... Please wait")
         controller.request_stop()
 
     btn_stop = tk.Button(
-        root, text="ЗБЕРЕГТИ ПРОГРЕС І БЕЗПЕЧНО ВИЙТИ",
+        root, text="SAVE PROGRESS AND SAFELY EXIT",
         font=("Arial", 11, "bold"), bg="#d9534f", fg="white",
         padx=15, pady=8, command=on_save_and_stop
     )
@@ -261,7 +278,7 @@ def start_gui_and_training():
             if controller.stop_requested:
                 root.destroy()
                 return
-            btn_stop.config(text="НАВЧАННЯ ЗАВЕРШЕНО (ЗАКРИТИ)", bg="#5cb85c", state="normal", command=root.destroy)
+            btn_stop.config(text="TRAINING COMPLETED (CLOSE)", bg="#5cb85c", state="normal", command=root.destroy)
         else:
             root.after(200, update_ui)
 

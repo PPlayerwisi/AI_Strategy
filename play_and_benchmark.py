@@ -8,17 +8,23 @@ import tkinter as tk
 from tkinter import messagebox
 import numpy as np
 import matplotlib.pyplot as plt
-from microrts_env import (
-    MicroRTSEnv, PoolRegistry, OnlineEvolutionEngine,
+
+from game_config import (
     UNIT_STATS, STRUCT_STATS, CASTLE_MAX_HP,
     MAX_STEPS, MAX_GOLD, GRID_SIZE, RELATIVE_OFFSETS,
-    SUPPLY_LIMIT, SUPPLY_TAX_PER_UNIT
+    SUPPLY_LIMIT, SUPPLY_TAX_PER_UNIT, MIN_TRAINING_EFFICIENCY,
+    DISBAND_REFUND_RATIO, DEMOLISH_REFUND_RATIO
+)
+from microrts_env import (
+    MicroRTSEnv, PoolRegistry, OnlineEvolutionEngine,
+    get_unit_name, get_struct_name
 )
 
 class TacticalWarfareGUI:
     def __init__(self):
         PoolRegistry.ensure_initialized()
-        self.env = MicroRTSEnv(mode="manual_p2", record_telemetry=True)
+        self.lang = "en"
+        self.env = MicroRTSEnv(mode="manual_p2", record_telemetry=True, lang=self.lang)
         self.base_dda_gen = 35.00
         self.active_dda_gen = 35.00
         self.env.set_dda_generation(self.active_dda_gen)
@@ -34,7 +40,7 @@ class TacticalWarfareGUI:
         self.window_games = 20
         self.matches_played = 0
         self.is_auto_playing = False
-        self.evo_status_str = "Пул готовий"
+        self.evo_status_str = "Pool Ready"
 
         self.grid_n = GRID_SIZE
         self.view_w = 684
@@ -49,8 +55,8 @@ class TacticalWarfareGUI:
         self._clamp_camera()
 
         self.root = tk.Tk()
-        self.root.title("Faction Warfare RTS (18x18) — Жива Еволюція Поколінь, Surge-DDA та Статистика Ефективності")
-        self.root.geometry("1160x760")
+        self.root.title("Faction Warfare RTS (18x18) — Evolutionary Platform & Surge-DDA")
+        self.root.geometry("1160x810")
         self.root.configure(bg="#182026")
 
         self.canvas = tk.Canvas(
@@ -129,10 +135,10 @@ class TacticalWarfareGUI:
 
     def _build_side_panel(self):
         self.econ_frame = tk.LabelFrame(
-            self.side_panel, text=" Скарбниця, Активне Покоління ШІ та Surge-DDA ",
-            font=("Arial", 10, "bold"), bg="#222f3e", fg="#feca57", padx=10, pady=8
+            self.side_panel, text=" Treasury, Active AI Generation & Surge-DDA ",
+            font=("Arial", 10, "bold"), bg="#222f3e", fg="#feca57", padx=10, pady=6
         )
-        self.econ_frame.pack(fill="x", pady=(0, 8))
+        self.econ_frame.pack(fill="x", pady=(0, 6))
 
         self.lbl_telemetry = tk.Label(
             self.econ_frame, text="", font=("Consolas", 9, "bold"),
@@ -141,95 +147,109 @@ class TacticalWarfareGUI:
         self.lbl_telemetry.pack(anchor="w")
 
         self.inspector_frame = tk.LabelFrame(
-            self.side_panel, text=" Характеристики та Ефективність Об'єкта ",
-            font=("Arial", 10, "bold"), bg="#222f3e", fg="#0abde3", padx=10, pady=8
+            self.side_panel, text=" Object Inspector & Efficiency ",
+            font=("Arial", 10, "bold"), bg="#222f3e", fg="#0abde3", padx=10, pady=6
         )
-        self.inspector_frame.pack(fill="x", pady=(0, 8))
+        self.inspector_frame.pack(fill="x", pady=(0, 6))
 
         self.lbl_inspector = tk.Label(
             self.inspector_frame,
-            text="Клікніть на будь-якого юніта, вежу,\nказарму або замок на полі бою.",
-            font=("Arial", 9, "bold"), bg="#222f3e", fg="#ffffff", justify="left", height=7
+            text="Click on any unit, tower, barracks, or castle.",
+            font=("Arial", 9, "bold"), bg="#222f3e", fg="#ffffff", justify="left", height=6
         )
         self.lbl_inspector.pack(anchor="w")
 
         self.actions_frame = tk.LabelFrame(
-            self.side_panel, text=" Доступні Накази Об'єкту ",
-            font=("Arial", 10, "bold"), bg="#222f3e", fg="#1dd1a1", padx=10, pady=6
+            self.side_panel, text=" Unit Orders & Construction ",
+            font=("Arial", 10, "bold"), bg="#222f3e", fg="#1dd1a1", padx=10, pady=5
         )
-        self.actions_frame.pack(fill="x", pady=(0, 8))
+        self.actions_frame.pack(fill="x", pady=(0, 6))
 
         self.btn_heal = tk.Button(
-            self.actions_frame, text="✚ Лікувати юніта (+25.00% макс. HP)",
+            self.actions_frame, text="Heal Unit (+25.00% max HP)",
             font=("Arial", 9, "bold"), bg="#10ac84", fg="white", width=38,
             command=self.cmd_heal_selected
         )
-        self.btn_heal.pack(pady=2)
+        self.btn_heal.pack(pady=1)
 
         self.btn_harvest = tk.Button(
-            self.actions_frame, text="⛏ Додаткова обробка клітинки (+1.50x доходу)",
+            self.actions_frame, text="Extra Tile Harvest (+1.50x yield)",
             font=("Arial", 9, "bold"), bg="#f39c12", fg="white", width=38,
             command=self.cmd_worker_harvest
         )
-        self.btn_harvest.pack(pady=2)
+        self.btn_harvest.pack(pady=1)
 
         self.btn_build_tower = tk.Button(
-            self.actions_frame, text="🗼 Звести Оборонну Вежу поруч (4.00$)",
+            self.actions_frame, text=f"Build Defense Tower ({STRUCT_STATS[1]['cost']:.2f}$)",
             font=("Arial", 9, "bold"), bg="#576574", fg="white", width=38,
             command=lambda: self.cmd_worker_build(1)
         )
-        self.btn_build_tower.pack(pady=2)
+        self.btn_build_tower.pack(pady=1)
 
         self.btn_build_barracks = tk.Button(
-            self.actions_frame, text="⚔ Звести Передову Казарму (5.00$)",
+            self.actions_frame, text=f"Build Forward Barracks ({STRUCT_STATS[2]['cost']:.2f}$)",
             font=("Arial", 9, "bold"), bg="#576574", fg="white", width=38,
             command=lambda: self.cmd_worker_build(2)
         )
-        self.btn_build_barracks.pack(pady=2)
+        self.btn_build_barracks.pack(pady=1)
+
+        self.btn_demolish = tk.Button(
+            self.actions_frame, text=f"Demolish Allied Structure (+{DEMOLISH_REFUND_RATIO * 100.00:.0f}% refund)",
+            font=("Arial", 9, "bold"), bg="#8e44ad", fg="white", width=38,
+            command=self.cmd_worker_demolish
+        )
+        self.btn_demolish.pack(pady=1)
+
+        self.btn_disband = tk.Button(
+            self.actions_frame, text=f"Disband Selected Unit (+{DISBAND_REFUND_RATIO * 100.00:.0f}% refund)",
+            font=("Arial", 9, "bold"), bg="#c0392b", fg="white", width=38,
+            command=self.cmd_disband_selected
+        )
+        self.btn_disband.pack(pady=1)
 
         self.btn_spawn_worker = tk.Button(
-            self.actions_frame, text="+ Найняти Робітника в будівлі (3.00$ | Утрим: 0.40$)",
+            self.actions_frame, text=f"Recruit Worker ({UNIT_STATS['worker']['cost']:.2f}$ | Upkeep: {UNIT_STATS['worker']['upkeep']:.2f}$)",
             font=("Arial", 9, "bold"), bg="#2e86de", fg="white", width=38,
             command=lambda: self.cmd_spawn_unit('worker')
         )
-        self.btn_spawn_worker.pack(pady=2)
+        self.btn_spawn_worker.pack(pady=1)
 
         self.btn_spawn_warrior = tk.Button(
-            self.actions_frame, text="+ Найняти Піхотинця в будівлі (6.00$ | Утрим: 1.10$)",
+            self.actions_frame, text=f"Recruit Warrior ({UNIT_STATS['warrior']['cost']:.2f}$ | Upkeep: {UNIT_STATS['warrior']['upkeep']:.2f}$)",
             font=("Arial", 9, "bold"), bg="#2e86de", fg="white", width=38,
             command=lambda: self.cmd_spawn_unit('warrior')
         )
-        self.btn_spawn_warrior.pack(pady=2)
+        self.btn_spawn_warrior.pack(pady=1)
 
         self.btn_spawn_archer = tk.Button(
-            self.actions_frame, text="+ Найняти Стрільця в будівлі (8.50$ | Утрим: 1.60$)",
+            self.actions_frame, text=f"Recruit Archer ({UNIT_STATS['archer']['cost']:.2f}$ | Upkeep: {UNIT_STATS['archer']['upkeep']:.2f}$)",
             font=("Arial", 9, "bold"), bg="#2e86de", fg="white", width=38,
             command=lambda: self.cmd_spawn_unit('archer')
         )
-        self.btn_spawn_archer.pack(pady=2)
+        self.btn_spawn_archer.pack(pady=1)
 
         self.turn_frame = tk.Frame(self.side_panel, bg="#182026")
         self.turn_frame.pack(fill="x", pady=2)
 
         self.btn_stats = tk.Button(
             self.turn_frame,
-            text="📈 Статистика ефективності (Графік + Медіана)",
+            text="Efficiency Statistics (Chart + Median)",
             font=("Arial", 9, "bold"), bg="#9b59b6", fg="white",
-            padx=8, pady=5, width=38, command=self.show_efficiency_chart
+            padx=8, pady=4, width=38, command=self.show_efficiency_chart
         )
         self.btn_stats.pack(pady=2)
 
         self.btn_end_turn = tk.Button(
             self.turn_frame,
-            text="✔ КІНЕЦЬ ХОДУ (Авто-хіл нерухомих + Хід ШІ)",
+            text="END TURN (Auto-Heal + AI Turn)",
             font=("Arial", 10, "bold"), bg="#2ecc71", fg="#182026",
-            padx=10, pady=7, width=38, command=self.end_human_turn
+            padx=10, pady=6, width=38, command=self.end_human_turn
         )
-        self.btn_end_turn.pack(pady=3)
+        self.btn_end_turn.pack(pady=2)
 
         self.btn_autoplay = tk.Button(
             self.turn_frame,
-            text="► Дивитись Авто-матч ШІ проти ШІ (0.50 с на хід)",
+            text="Watch AI vs AI Auto-Match (0.50s / turn)",
             font=("Arial", 9, "bold"), bg="#48dbfb", fg="#182026",
             padx=8, pady=4, width=38, command=self.toggle_autoplay
         )
@@ -244,13 +264,13 @@ class TacticalWarfareGUI:
         ai_med = st["ai_median"]
 
         plt.figure(figsize=(10, 5.2))
-        plt.plot(turns, p_eff, label=f"Ефективність Гравця (поточна: {st['player_current']:.2f})", color="#0fbcf9", linewidth=2.5)
-        plt.axhline(p_med, color="#0fbcf9", linestyle="--", linewidth=1.6, label=f"Медіана Гравця: {p_med:.2f}")
-        plt.plot(turns, ai_eff, label=f"Ефективність ШІ (поточна: {st['ai_current']:.2f})", color="#eb3b5a", linewidth=2.5)
-        plt.axhline(ai_med, color="#eb3b5a", linestyle="--", linewidth=1.6, label=f"Медіана ШІ: {ai_med:.2f}")
-        plt.xlabel("Хід партії")
-        plt.ylabel("Інтегральна ефективність")
-        plt.title(f"Зростання ефективності та Медіана (Хід {self.env.turn_count}, Активне покоління: {self.env.active_gen_label})")
+        plt.plot(turns, p_eff, label=f"Player Efficiency (current: {st['player_current']:.2f})", color="#0fbcf9", linewidth=2.5)
+        plt.axhline(p_med, color="#0fbcf9", linestyle="--", linewidth=1.6, label=f"Player Median: {p_med:.2f}")
+        plt.plot(turns, ai_eff, label=f"AI Efficiency (current: {st['ai_current']:.2f})", color="#eb3b5a", linewidth=2.5)
+        plt.axhline(ai_med, color="#eb3b5a", linestyle="--", linewidth=1.6, label=f"AI Median: {ai_med:.2f}")
+        plt.xlabel("Match Turn")
+        plt.ylabel("Integral Efficiency")
+        plt.title(f"Efficiency Growth & Median (Turn {self.env.turn_count}, Active AI: {self.env.active_gen_label})")
         plt.legend(loc="upper left")
         plt.grid(True, linestyle="--", alpha=0.5)
         plt.tight_layout()
@@ -327,62 +347,61 @@ class TacticalWarfareGUI:
     def _update_inspector_and_buttons(self):
         for btn in [
             self.btn_heal, self.btn_harvest, self.btn_build_tower, self.btn_build_barracks,
+            self.btn_demolish, self.btn_disband,
             self.btn_spawn_worker, self.btn_spawn_warrior, self.btn_spawn_archer
         ]:
             btn.config(state="disabled")
 
         if self.selected_pos is None:
             self.lbl_inspector.config(
-                text="Нічого не обрано.\nКлікніть на юніта, вежу, казарму або замок.\n(Коліщатко миші: зум та переміщення камери)"
+                text="Nothing selected.\nClick on a unit, tower, barracks, or castle.\n(Mouse wheel: zoom, Right-click drag: pan)"
             )
             return
 
         r, c = self.selected_pos
         base_val = float(self.env.tile_yields[r, c])
         eff_val = self.env.get_effective_tile_yield(r, c)
-        owner_str = {0: "Нейтральна (Сіра)", 1: "Червона Імперія (ШІ)", 2: "Синій Альянс (Ви)"}[int(self.env.territory[r, c])]
+        owner_str = {0: "Neutral (Gray)", 1: "Red Empire (AI)", 2: "Blue Alliance (You)"}[int(self.env.territory[r, c])]
 
         if self.env.is_tile_built_up(r, c):
-            info_lines = [f"Земля: +0.00$/хід [Забудовано, базова: +{base_val:.2f}$] ({owner_str})"]
+            info_lines = [f"Land: +0.00$/turn [Built-up, base: +{base_val:.2f}$] ({owner_str})"]
         else:
-            info_lines = [f"Земля: +{eff_val:.2f}$/хід ({owner_str})"]
+            info_lines = [f"Land: +{eff_val:.2f}$/turn ({owner_str})"]
 
         if self.selected_pos in self.env.units:
             u = self.env.units[self.selected_pos]
             st = UNIT_STATS[u['type']]
-            f_str = "Синій Альянс (Ваш)" if u['faction'] == 2 else "Червона Імперія (ШІ)"
-            status_str = "ГОТОВИЙ ДО ХОДУ" if u['ready'] else "ВЖЕ ДІЯВ / ЩОЙНО НАЙНЯТИЙ"
+            u_name = get_unit_name(u['type'], self.lang)
+            f_str = "Blue Alliance (You)" if u['faction'] == 2 else "Red Empire (AI)"
+            status_str = "READY" if u['ready'] else "ACTED / JUST SPAWNED"
             eff_score = u.get('efficiency', 0.00)
-            eff_rank = "ЕЛІТНИЙ ВЕТЕРАН (Вчиться ШІ!)" if eff_score >= 2.50 else "Звичайний боєць"
-            info_lines.append(f"Тип підрозділу: {st['name']} [{f_str}]")
-            info_lines.append(f"Здоров'я (HP): {u['hp']:.2f} / {u['max_hp']:.2f} ({(u['hp'] / u['max_hp']) * 100.00:.2f}%)")
-            info_lines.append(f"Дальність руху: {st['move_range']} кліт. | Дальність атаки: {st['atk_range']} кліт.")
-            info_lines.append(f"Шкода атаки: {st['dmg']:.2f} | Плата за службу: {st['upkeep']:.2f}$/хід")
-            info_lines.append(f"Ефективність: {eff_score:.2f} балів ({eff_rank})")
-            info_lines.append(f"Статус: {status_str}")
+            eff_rank = "ELITE VETERAN (>=100)" if eff_score >= MIN_TRAINING_EFFICIENCY else "Standard Unit"
+            info_lines.append(f"Unit: {u_name} [{f_str}]")
+            info_lines.append(f"HP: {u['hp']:.2f} / {u['max_hp']:.2f} ({(u['hp'] / u['max_hp']) * 100.00:.2f}%)")
+            info_lines.append(f"Move: {st['move_range']} | Attack Range: {st['atk_range']} | Dmg: {st['dmg']:.2f}")
+            info_lines.append(f"Upkeep: {st['upkeep']:.2f}$/turn | Efficiency: {eff_score:.2f} ({eff_rank})")
+            info_lines.append(f"Status: {status_str}")
 
-            if u['faction'] == 2 and u['ready']:
-                self.btn_heal.config(state="normal")
-                if u['type'] == 'worker':
-                    if eff_val > 0.00:
-                        self.btn_harvest.config(state="normal")
-                    if self.env.p2_gold >= STRUCT_STATS[1]['cost'] and self.env._find_adjacent_tower_site(self.selected_pos, 2) is not None:
-                        self.btn_build_tower.config(state="normal")
-                    can_b = (
-                        self.env.territory[r, c] == 2
-                        and self.selected_pos not in [self.env.p1_castle_pos, self.env.p2_castle_pos]
-                        and self.env.struct_type[r, c] == 0
-                    )
-                    if self.env.p2_gold >= STRUCT_STATS[2]['cost'] and (can_b or self.env._find_adjacent_tower_site(self.selected_pos, 2) is not None):
-                        self.btn_build_barracks.config(state="normal")
+            if u['faction'] == 2:
+                self.btn_disband.config(state="normal")
+                if u['ready']:
+                    self.btn_heal.config(state="normal")
+                    if u['type'] == 'worker':
+                        if eff_val > 0.00:
+                            self.btn_harvest.config(state="normal")
+                        if self.env.p2_gold >= STRUCT_STATS[1]['cost'] and self.env._find_adjacent_tower_site(self.selected_pos, 2) is not None:
+                            self.btn_build_tower.config(state="normal")
+                        if self.env.p2_gold >= STRUCT_STATS[2]['cost'] and self.env._find_barracks_build_site(self.selected_pos, 2, enforce_ai_distance=False) is not None:
+                            self.btn_build_barracks.config(state="normal")
+                        if self.env._find_demolishable_structure_site(self.selected_pos, 2) is not None:
+                            self.btn_demolish.config(state="normal")
 
         if self.selected_pos == self.env.p2_castle_pos:
             occupied = (self.selected_pos in self.env.units)
-            info_lines.append(f"Споруда: ВАШ ЗАМОК (Міцність: {self.env.p2_castle_hp:.2f} / {CASTLE_MAX_HP:.2f} HP)")
+            info_lines.append(f"Structure: YOUR CASTLE (HP: {self.env.p2_castle_hp:.2f} / {CASTLE_MAX_HP:.2f})")
             if occupied:
-                info_lines.append("[!] Замок зайнятий юнітом! Звільніть клітинку для найму.")
+                info_lines.append("[!] Castle occupied by a unit! Move it out to recruit.")
             else:
-                info_lines.append("Клітинка вільна: оберіть юніта для спавну прямо в Замку.")
                 if self.env.p2_gold >= UNIT_STATS['worker']['cost']:
                     self.btn_spawn_worker.config(state="normal")
                 if self.env.p2_gold >= UNIT_STATS['warrior']['cost']:
@@ -391,26 +410,24 @@ class TacticalWarfareGUI:
                     self.btn_spawn_archer.config(state="normal")
 
         elif self.selected_pos == self.env.p1_castle_pos:
-            info_lines.append(f"Споруда: ЗАМОК ШІ (Міцність: {self.env.p1_castle_hp:.2f} / {CASTLE_MAX_HP:.2f} HP)")
+            info_lines.append(f"Structure: AI CASTLE (HP: {self.env.p1_castle_hp:.2f} / {CASTLE_MAX_HP:.2f})")
 
         elif self.env.struct_type[r, c] != 0:
             st_t = int(self.env.struct_type[r, c])
             st_owner = int(self.env.struct_owner[r, c])
             st_info = STRUCT_STATS[st_t]
-            info_lines.append(f"Споруда: {st_info['name']} ({'Ваша' if st_owner == 2 else 'Ворожа'})")
-            info_lines.append(f"Міцність: {self.env.struct_hp[r, c]:.2f} / {st_info['max_hp']:.2f} HP")
-            if st_t == 1:
-                info_lines.append(f"Дальність вогню вежі: 2 кліт. | Шкода: {st_info['dmg']:.2f} (1 ціль за хід)")
-            elif st_t == 2 and st_owner == 2:
-                if self.selected_pos not in self.env.units:
-                    if self.env.p2_gold >= UNIT_STATS['worker']['cost']:
-                        self.btn_spawn_worker.config(state="normal")
-                    if self.env.p2_gold >= UNIT_STATS['warrior']['cost']:
-                        self.btn_spawn_warrior.config(state="normal")
-                    if self.env.p2_gold >= UNIT_STATS['archer']['cost']:
-                        self.btn_spawn_archer.config(state="normal")
+            st_name = get_struct_name(st_t, self.lang)
+            info_lines.append(f"Structure: {st_name} ({'Allied' if st_owner == 2 else 'Enemy'})")
+            info_lines.append(f"HP: {self.env.struct_hp[r, c]:.2f} / {st_info['max_hp']:.2f}")
+            if st_t == 2 and st_owner == 2 and self.selected_pos not in self.env.units:
+                if self.env.p2_gold >= UNIT_STATS['worker']['cost']:
+                    self.btn_spawn_worker.config(state="normal")
+                if self.env.p2_gold >= UNIT_STATS['warrior']['cost']:
+                    self.btn_spawn_warrior.config(state="normal")
+                if self.env.p2_gold >= UNIT_STATS['archer']['cost']:
+                    self.btn_spawn_archer.config(state="normal")
 
-        self.lbl_inspector.config(text="\n".join(info_lines[:7]))
+        self.lbl_inspector.config(text="\n".join(info_lines[:6]))
 
     def cmd_heal_selected(self):
         if self.selected_pos in self.env.units and self.env.units[self.selected_pos]['faction'] == 2:
@@ -431,6 +448,21 @@ class TacticalWarfareGUI:
             act_code = 26 if build_type == 1 else 27
             self.env.record_entity_decision('unit', self.selected_pos, faction=2, action=act_code)
             self.env.execute_worker_build(self.selected_pos, build_type=build_type)
+            self._recompute_highlights()
+            self._refresh_board()
+
+    def cmd_disband_selected(self):
+        if self.selected_pos in self.env.units and self.env.units[self.selected_pos]['faction'] == 2:
+            self.env.record_entity_decision('unit', self.selected_pos, faction=2, action=28)
+            self.env.execute_unit_disband(self.selected_pos)
+            self.selected_pos = None
+            self._recompute_highlights()
+            self._refresh_board()
+
+    def cmd_worker_demolish(self):
+        if self.selected_pos in self.env.units and self.env.units[self.selected_pos]['faction'] == 2:
+            self.env.record_entity_decision('unit', self.selected_pos, faction=2, action=29)
+            self.env.execute_worker_demolish(self.selected_pos)
             self._recompute_highlights()
             self._refresh_board()
 
@@ -489,8 +521,12 @@ class TacticalWarfareGUI:
         human_won = (winner == "p2")
         winning_fac = 2 if human_won else 1
 
-        m_obs, m_acts, m_weights = self.env.collect_match_training_samples(winning_faction=winning_fac, min_efficiency=2.50)
-        saved_samples = self.env.export_high_efficiency_telemetry(winning_faction=winning_fac, min_efficiency=2.50)
+        m_obs, m_acts, m_weights = self.env.collect_match_training_samples(
+            winning_faction=winning_fac, min_efficiency=MIN_TRAINING_EFFICIENCY
+        )
+        saved_samples = self.env.export_high_efficiency_telemetry(
+            winning_faction=winning_fac, min_efficiency=MIN_TRAINING_EFFICIENCY
+        )
 
         self.matches_played += 1
         self.recent_human_wins.append(1.00 if human_won else 0.00)
@@ -510,22 +546,23 @@ class TacticalWarfareGUI:
         self.active_dda_gen = self.base_dda_gen
         self.env.set_dda_generation(self.active_dda_gen)
 
-        self.evo_status_str = "Навчання нового покоління..."
+        self.evo_status_str = "Training new generation..."
         def _bg_train():
             entry = OnlineEvolutionEngine.evolve_and_benchmark_from_match(m_obs, m_acts, m_weights, username="LocalPlayer")
-            self.evo_status_str = f"Додано {entry['label']} (Рейтинг: {entry['rating']:.2f})"
+            doc_val = entry.get("doctrine_alignment", 100.00)
+            self.evo_status_str = f"Added {entry['label']} (R:{entry['rating']:.2f} | Doc:{doc_val:.1f}%)"
             self.env.set_dda_generation(self.active_dda_gen)
 
         threading.Thread(target=_bg_train, daemon=True).start()
 
         if not self.is_auto_playing:
-            title_msg = "ПЕРЕМОГА СИНЬОГО АЛЬЯНСУ!" if human_won else "ПЕРЕМОГА ЧЕРВОНОЇ ІМПЕРІЇ (ШІ)!"
+            title_msg = "BLUE ALLIANCE VICTORY!" if human_won else "RED EMPIRE (AI) VICTORY!"
             messagebox.showinfo(
-                "Кампанію завершено",
+                "Match Completed",
                 f"{title_msg}\n"
-                f"Ковзний вінрейт: {winrate * 100.00:.2f}%\n"
-                f"Новий базовий рейтинг ШІ: {self.base_dda_gen:.2f}\n"
-                f"Відправлено ходів на створення нового покоління: {saved_samples}"
+                f"Rolling Winrate: {winrate * 100.00:.2f}%\n"
+                f"New AI Base Rating: {self.base_dda_gen:.2f}\n"
+                f"Elite Unit Samples (>=100 eff) Exported: {saved_samples}"
             )
 
         self.env.reset()
@@ -539,10 +576,10 @@ class TacticalWarfareGUI:
     def toggle_autoplay(self):
         self.is_auto_playing = not self.is_auto_playing
         if self.is_auto_playing:
-            self.btn_autoplay.config(text="■ Зупинити Авто-матч", bg="#eb3b5a", fg="white")
+            self.btn_autoplay.config(text="Stop Auto-Match", bg="#eb3b5a", fg="white")
             self._auto_match_step()
         else:
-            self.btn_autoplay.config(text="► Дивитись Авто-матч ШІ проти ШІ (0.50 с на хід)", bg="#48dbfb", fg="#182026")
+            self.btn_autoplay.config(text="Watch AI vs AI Auto-Match (0.50s / turn)", bg="#48dbfb", fg="#182026")
 
     def _auto_match_step(self):
         if not self.is_auto_playing:
@@ -631,14 +668,14 @@ class TacticalWarfareGUI:
                     f_sz = max(6, int(cs * 0.16))
                     if st_t == 1:
                         self.canvas.create_rectangle(x1 + cs * 0.16, y1 + cs * 0.25, x2 - cs * 0.16, y2 - cs * 0.12, fill=st_col, outline="#f5f6fa", width=2)
-                        self.canvas.create_text(x1 + cs * 0.50, y1 + cs * 0.56, text=f"ВЖ\n{self.env.struct_hp[r, c]:.0f}", fill="white", font=("Arial", f_sz, "bold"))
+                        self.canvas.create_text(x1 + cs * 0.50, y1 + cs * 0.56, text=f"TW\n{self.env.struct_hp[r, c]:.0f}", fill="white", font=("Arial", f_sz, "bold"))
                     else:
                         self.canvas.create_rectangle(x1 + cs * 0.08, y1 + cs * 0.22, x2 - cs * 0.08, y2 - cs * 0.08, fill=st_col, outline="#feca57", width=2, stipple="gray50")
-                        self.canvas.create_text(x1 + cs * 0.50, y2 - cs * 0.20, text=f"КЗ {self.env.struct_hp[r, c]:.0f}", fill="#feca57", font=("Arial", f_sz, "bold"))
+                        self.canvas.create_text(x1 + cs * 0.50, y2 - cs * 0.20, text=f"BR {self.env.struct_hp[r, c]:.0f}", fill="#feca57", font=("Arial", f_sz, "bold"))
 
         for pos, hp, col, title in [
-            (self.env.p1_castle_pos, self.env.p1_castle_hp, "#83142c", "ЗМ ШІ"),
-            (self.env.p2_castle_pos, self.env.p2_castle_hp, "#0a3d62", "ВАШ ЗМ")
+            (self.env.p1_castle_pos, self.env.p1_castle_hp, "#83142c", "AI CST"),
+            (self.env.p2_castle_pos, self.env.p2_castle_hp, "#0a3d62", "YOUR CST")
         ]:
             x1 = ox + pos[1] * cs
             y1 = oy + pos[0] * cs
@@ -669,7 +706,7 @@ class TacticalWarfareGUI:
                 continue
 
             u_col = "#eb3b5a" if u['faction'] == 1 else "#0fbcf9"
-            border_col = "#2ecc71" if (u['faction'] == 2 and u['ready']) else ("#feca57" if u.get('efficiency', 0.0) >= 2.5 else "#dcdde1")
+            border_col = "#2ecc71" if (u['faction'] == 2 and u['ready']) else ("#feca57" if u.get('efficiency', 0.0) >= MIN_TRAINING_EFFICIENCY else "#dcdde1")
             rad = max(9.0, cs * 0.34)
 
             self.canvas.create_oval(cx - rad, cy - rad, cx + rad, cy + rad, fill=u_col, outline=border_col, width=2)
@@ -698,14 +735,14 @@ class TacticalWarfareGUI:
         wr = float(np.mean(self.recent_human_wins)) * 100.00 if self.recent_human_wins else 50.00
 
         self.lbl_telemetry.config(text=(
-            f"Партія: #{self.matches_played + 1} | Хід: {self.env.turn_count}/{MAX_STEPS} | Вінрейт: {wr:.2f}%\n"
-            f"АКТИВНЕ ПОКОЛІННЯ: {self.env.active_gen_label} (Рейтинг: {self.active_dda_gen:.2f})\n"
-            f"Базовий рейтинг: {self.base_dda_gen:.2f} | Статус: {self.evo_status_str}\n"
+            f"Match: #{self.matches_played + 1} | Turn: {self.env.turn_count}/{MAX_STEPS} | Winrate: {wr:.2f}%\n"
+            f"ACTIVE AI: {self.env.active_gen_label} (Rating: {self.active_dda_gen:.2f})\n"
+            f"Base Rating: {self.base_dda_gen:.2f} | Status: {self.evo_status_str}\n"
             f"------------------------------------------------------------\n"
-            f"СИНІ (ВИ) : Казна {self.env.p2_gold:6.2f}$ / {MAX_GOLD:.0f}$ | Землі: {t2:3d} (+{inc2:.2f}$)\n"
-            f"            Армія: {u2:2d} юн. (Плата: -{upk2:.2f}$, Пост: -{tax2:.2f}$) | {net2:+.2f}$/х\n"
-            f"ЧЕРВОНІ ШІ: Казна {self.env.p1_gold:6.2f}$ / {MAX_GOLD:.0f}$ | Землі: {t1:3d} (+{inc1:.2f}$)\n"
-            f"            Армія: {u1:2d} юн. (Плата: -{upk1:.2f}$, Пост: -{tax1:.2f}$) | {net1:+.2f}$/х"
+            f"BLUE (YOU): Gold {self.env.p2_gold:6.2f}$ / {MAX_GOLD:.0f}$ | Land: {t2:3d} (+{inc2:.2f}$)\n"
+            f"            Army: {u2:2d} (Upkeep: -{upk2:.2f}$, Tax: -{tax2:.2f}$) | {net2:+.2f}$/t\n"
+            f"RED (AI)  : Gold {self.env.p1_gold:6.2f}$ / {MAX_GOLD:.0f}$ | Land: {t1:3d} (+{inc1:.2f}$)\n"
+            f"            Army: {u1:2d} (Upkeep: -{upk1:.2f}$, Tax: -{tax1:.2f}$) | {net1:+.2f}$/t"
         ))
 
         self._update_inspector_and_buttons()
@@ -733,10 +770,10 @@ def generate_stochastic_skill_schedule(num_matches: int):
     return schedule, jump_points, segments
 
 def run_scientific_benchmark(num_matches=200):
-    print(f"[*] Запуск наукового бенчмарку Faction Warfare RTS 18x18 ({num_matches} партій на режим)...")
+    print(f"[*] Starting Faction Warfare RTS 18x18 scientific benchmark ({num_matches} matches per regime)...")
     skill_schedule, jump_points, segments = generate_stochastic_skill_schedule(num_matches)
 
-    env = MicroRTSEnv(mode="manual_p2", record_telemetry=False)
+    env = MicroRTSEnv(mode="manual_p2", record_telemetry=False, lang="en")
     regimes = ["Static_Easy", "Static_Hard", "Proposed_Fast_DDA"]
     results = {r: [] for r in regimes}
     window_size = 20
@@ -749,7 +786,7 @@ def run_scientific_benchmark(num_matches=200):
         recent_wins = []
         prev_wr = 0.50
         history = []
-        print(f"\n[*] Обчислення режиму {regime}...")
+        print(f"\n[*] Evaluating regime {regime}...")
 
         for match_idx in range(num_matches):
             player_skill = float(skill_schedule[match_idx])
@@ -827,11 +864,11 @@ def run_scientific_benchmark(num_matches=200):
 
             if (match_idx + 1) % 20 == 0:
                 elapsed = time.time() - t_start
-                print(f"    [{regime}] Партія {match_idx + 1:3d}/{num_matches} | WR: {rolling_wr * 100.00:5.2f}% | Покоління: {active_idx:6.2f} | Час: {elapsed:.2f} с")
+                print(f"    [{regime}] Match {match_idx + 1:3d}/{num_matches} | WR: {rolling_wr * 100.00:5.2f}% | Gen: {active_idx:6.2f} | Time: {elapsed:.2f} s")
 
         results[regime] = history
 
-    print("\nПІДСУМКОВІ НАУКОВІ МЕТРИКИ (ТОЧНІСТЬ ДО СОТИХ):")
+    print("\nFINAL SCIENTIFIC METRICS:")
     for regime in regimes:
         arr = np.array(results[regime][window_size:])
         balanced = np.sum((arr >= 0.40) & (arr <= 0.60))
@@ -867,13 +904,13 @@ def run_scientific_benchmark(num_matches=200):
     out_file = out_dir / "microrts_dda_benchmark.png"
     plt.savefig(str(out_file), dpi=300)
     plt.close()
-    print(f"[*] Графік збережено у файл: {out_file}")
+    print(f"[*] Chart saved to: {out_file}")
 
 if __name__ == "__main__":
-    print("Оберіть режим запуску:")
-    print("1 — Грати особисто в локальному вікні Tkinter (18x18)")
-    print("2 — Запустити науковий бенчмарк")
-    choice = input("Ваш вибір (1 або 2): ").strip()
+    print("Select launch mode:")
+    print("1 — Play locally in Tkinter GUI (18x18)")
+    print("2 — Run scientific benchmark")
+    choice = input("Your choice (1 or 2): ").strip()
     if choice == "2":
         run_scientific_benchmark(num_matches=200)
     else:
