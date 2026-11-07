@@ -3,7 +3,9 @@ import numpy as np
 
 from game_config import (
     MAX_GOLD, SUPPLY_LIMIT, SUPPLY_TAX_PER_UNIT,
-    MAX_WORKERS_PER_FACTION, MIN_GOLD_RESERVE_FOR_DEFICIT_SPAWN,
+    MIN_WORKERS_PER_FACTION, MAX_WORKERS_PER_FACTION,
+    AI_BUILD_LOCK_TURNS, AUTO_SPAWN_NET_INCOME_THRESHOLD,
+    MIN_GOLD_RESERVE_FOR_DEFICIT_SPAWN,
     DEFICIT_RUNWAY_TURNS, EMERGENCY_RECOVERY_TARGET_UNITS,
     MIN_BARRACKS_CASTLE_DIST, MAX_SLOW_UNIT_FRONTLINE_DIST,
     OSCILLATION_PENALTY, UNIT_STATS, STRUCT_STATS,
@@ -55,6 +57,57 @@ class AIStrategistMixin:
             enemy_fp += self._cached_fp_maps[ef]
         return ally_fp, enemy_fp
 
+    def _distance_to_nearest_non_allied_tile(self, pos: tuple, faction: int) -> int:
+        f = int(faction)
+        r, c = int(pos[0]), int(pos[1])
+        mask = (self.terrain != 0) & (self.territory != f)
+        if not np.any(mask):
+            enemy_castle = self._get_primary_enemy_castle(f, pos)
+            return abs(r - enemy_castle[0]) + abs(c - enemy_castle[1])
+        dists = np.abs(self._grid_r[mask] - r) + np.abs(self._grid_c[mask] - c)
+        return int(np.min(dists))
+
+    def _prevent_bankruptcy_by_disbanding(self, faction: int):
+        f = int(faction)
+        if not self.is_faction_alive(f):
+            return
+
+        safety = 0
+        while safety < 30:
+            safety += 1
+            curr_gold = self.get_faction_gold(f)
+            _, _, net_inc, _, _ = self.get_faction_economy_stats(f)
+            if curr_gold + net_inc >= 0.00:
+                break
+
+            combat_candidates = [
+                (pos, u) for pos, u in self.units.items()
+                if u['faction'] == f and u['type'] in ('archer', 'warrior')
+            ]
+            if not combat_candidates:
+                worker_candidates = [
+                    (pos, u) for pos, u in self.units.items()
+                    if u['faction'] == f and u['type'] == 'worker'
+                ]
+                if len(worker_candidates) <= MIN_WORKERS_PER_FACTION:
+                    break
+                combat_candidates = worker_candidates
+
+            def _disband_sort_key(item):
+                pos, u = item
+                type_prio = 0 if u['type'] == 'archer' else (1 if u['type'] == 'warrior' else 2)
+                hp_ratio = round(float(u['hp']) / max(0.01, float(u['max_hp'])), 2)
+                dist_front = self._distance_to_nearest_non_allied_tile(pos, f)
+                return (type_prio, hp_ratio, -dist_front, float(u.get('efficiency', 0.00)))
+
+            worst_pos, worst_u = min(combat_candidates, key=_disband_sort_key)
+            u_type = worst_u['type']
+            refund = self.execute_unit_disband(worst_pos)
+            if refund > 0.00:
+                self.add_localized_event("ai_disband", u_type=u_type, refund=refund)
+            else:
+                break
+
     def _assess_strategic_situation(self, faction: int) -> dict:
         f = int(faction)
         enemies = set(self.get_enemy_factions(f))
@@ -87,11 +140,11 @@ class AIStrategistMixin:
                 if dist < min_inter_unit_dist:
                     min_inter_unit_dist = dist
 
-        first_contact = (min_inter_unit_dist <= 9 or closest_castle_dist <= 12 or len(enemy_combat_positions) > 0)
+        first_contact = (min_inter_unit_dist <= 8 or closest_castle_dist <= 11)
         under_pressure = (
-            closest_castle_dist <= 10
-            or len(enemy_combat_positions) > len(my_combat_positions)
-            or (len(my_combat_positions) == 0 and len(enemy_all_positions) > 0)
+            closest_castle_dist <= 8
+            or (first_contact and len(enemy_combat_positions) > len(my_combat_positions) + 1)
+            or (len(my_combat_positions) == 0 and closest_castle_dist <= 12)
         )
         enemy_retreating = (len(my_combat_positions) >= len(enemy_combat_positions) + 2 and closest_castle_dist > 14)
 
@@ -144,6 +197,9 @@ class AIStrategistMixin:
             return False
 
         _, _, net_inc, _, unit_cnt = self.get_faction_economy_stats(f)
+        if net_inc >= AUTO_SPAWN_NET_INCOME_THRESHOLD:
+            return True
+
         extra_tax = SUPPLY_TAX_PER_UNIT if unit_cnt >= SUPPLY_LIMIT else 0.00
         projected_net = round(net_inc - new_upkeep - extra_tax, 2)
         gold_after_runway = round(remaining_gold + (float(DEFICIT_RUNWAY_TURNS) * projected_net), 2)
@@ -151,11 +207,11 @@ class AIStrategistMixin:
         if remaining_gold >= MIN_GOLD_RESERVE_FOR_DEFICIT_SPAWN and gold_after_runway >= 5.00:
             return True
 
-        if projected_net >= 0.20:
+        if projected_net >= 0.15:
             return True
 
         if is_combat_unit and (first_contact or unit_cnt <= 3):
-            if projected_net >= -0.35 and gold_after_runway >= 3.00:
+            if projected_net >= -0.35 and (remaining_gold + projected_net >= 0.50) and gold_after_runway >= 2.00:
                 return True
 
         return False
@@ -317,7 +373,6 @@ class AIStrategistMixin:
         u_type = u['type']
         ally_fp, enemy_fp = self._compute_firepower_maps(f)
         cluster_map = self._compute_resource_cluster_map()
-        sit = self._assess_strategic_situation(f)
 
         v_double = 0.00
         tiles_captured = 0.00
@@ -422,6 +477,7 @@ class AIStrategistMixin:
 
         f = int(faction)
         sit = self._assess_strategic_situation(f)
+        _, _, net_inc, _, _ = self.get_faction_economy_stats(f)
 
         if entity_kind == 'unit' and pos in self.units:
             u = self.units[pos]
@@ -432,13 +488,20 @@ class AIStrategistMixin:
                     return priors
 
             priors[28] = -35.00
+            if self.turn_count <= AI_BUILD_LOCK_TURNS:
+                priors[26] = -100.00
+                priors[27] = -100.00
+            else:
+                my_barracks = int(np.sum((self.struct_owner == f) & (self.struct_type == 2)))
+                my_towers = int(np.sum((self.struct_owner == f) & (self.struct_type == 1)))
+                if mask[27] and my_barracks < 2 and (net_inc >= 1.20 or self.get_faction_gold(f) >= 14.00):
+                    priors[27] = 24.00
+                if mask[26] and my_towers < 3 and (sit['under_pressure'] or self.get_faction_gold(f) >= 16.00):
+                    priors[26] = 20.00
+
             if mask[29]:
                 dem_site = self._find_demolishable_structure_site(pos, f)
-                my_castle = self.castle_positions[f]
-                if dem_site is not None and (
-                    (abs(dem_site[0] - my_castle[0]) + abs(dem_site[1] - my_castle[1]) < MIN_BARRACKS_CASTLE_DIST and int(self.struct_type[dem_site[0], dem_site[1]]) == 2)
-                    or float(self.tile_yields[dem_site[0], dem_site[1]]) >= 0.35
-                ):
+                if dem_site is not None and not self._is_valid_barracks_distance(dem_site[0], dem_site[1]) and int(self.struct_type[dem_site[0], dem_site[1]]) == 2:
                     priors[29] = 18.00
                 else:
                     priors[29] = -25.00
@@ -459,7 +522,12 @@ class AIStrategistMixin:
             my_combat = sit['my_combat_count']
             my_total = sit['my_total_units']
 
-            if my_workers >= MAX_WORKERS_PER_FACTION or (sit['under_pressure'] and my_combat <= sit['enemy_combat_count'] + 1 and my_workers >= 1):
+            if my_workers < MIN_WORKERS_PER_FACTION and mask[27]:
+                priors[27] = 45.00
+                priors[24] = -35.00
+                return priors
+
+            if my_workers >= MAX_WORKERS_PER_FACTION or (sit['under_pressure'] and my_combat <= sit['enemy_combat_count'] + 1 and my_workers >= MIN_WORKERS_PER_FACTION):
                 priors[27] = -100.00
 
             if my_total == 0:
@@ -473,7 +541,15 @@ class AIStrategistMixin:
                     priors[24] = -30.00
                 return priors
 
-            if sit['under_pressure'] or my_combat < sit['enemy_combat_count'] + 2 or self.get_faction_gold(f) >= MIN_GOLD_RESERVE_FOR_DEFICIT_SPAWN:
+            if net_inc >= AUTO_SPAWN_NET_INCOME_THRESHOLD:
+                priors[24] = -40.00
+                if my_workers < 2 and mask[27] and not sit['under_pressure']:
+                    priors[27] = 26.00
+                if mask[28]:
+                    priors[28] = 28.00
+                if mask[29] and self._has_enemy_territory_within(pos, f, MAX_SLOW_UNIT_FRONTLINE_DIST):
+                    priors[29] = 25.00
+            elif sit['under_pressure'] or my_combat < sit['enemy_combat_count'] + 2 or self.get_faction_gold(f) >= MIN_GOLD_RESERVE_FOR_DEFICIT_SPAWN:
                 if mask[28] and self._is_recruitment_safe(f, UNIT_STATS['warrior']['upkeep'], UNIT_STATS['warrior']['cost'], sit['first_contact'], True):
                     priors[28] = 22.00
                     priors[24] = -15.00
@@ -501,8 +577,6 @@ class AIStrategistMixin:
 
         comp = self.faction_competence.get(f, 0.65)
         enemies = set(self.get_enemy_factions(f))
-        my_castle = self.castle_positions[f]
-        enemy_castle = self._get_primary_enemy_castle(f, pos)
         gold = self.get_faction_gold(f)
         r, c = pos
 
@@ -534,7 +608,6 @@ class AIStrategistMixin:
             my_total = sit['my_total_units']
             my_warriors = sum(1 for u in self.units.values() if u['faction'] == f and u['type'] == 'warrior')
             my_archers = sum(1 for u in self.units.values() if u['faction'] == f and u['type'] == 'archer')
-            my_barracks = int(np.sum((self.struct_owner == f) & (self.struct_type == 2)))
 
             if my_total < EMERGENCY_RECOVERY_TARGET_UNITS and (my_total == 0 or (my_combat == 0 and my_workers < 2)):
                 can_rec, _ = self._can_recover_economy_from_zero(f, pos)
@@ -552,37 +625,51 @@ class AIStrategistMixin:
                         return 27
                     return 24
 
+            if my_workers < MIN_WORKERS_PER_FACTION and mask[27]:
+                if not sit['under_pressure'] or my_combat >= 1 or gold < UNIT_STATS['warrior']['cost']:
+                    return 27
+
+            can_spawn_archer_here = mask[29] and self._has_enemy_territory_within(pos, f, MAX_SLOW_UNIT_FRONTLINE_DIST)
+
+            if net_inc >= AUTO_SPAWN_NET_INCOME_THRESHOLD:
+                if my_workers < 2 and mask[27] and not sit['under_pressure']:
+                    return 27
+                if my_workers < MAX_WORKERS_PER_FACTION and my_combat >= my_workers * 2 and mask[27] and not sit['under_pressure']:
+                    return 27
+                if my_warriors >= my_archers + 2 and can_spawn_archer_here:
+                    return 29
+                if mask[28]:
+                    return 28
+                if can_spawn_archer_here:
+                    return 29
+                if my_workers < MAX_WORKERS_PER_FACTION and mask[27]:
+                    return 27
+
             if sit['under_pressure'] or my_combat < sit['enemy_combat_count']:
                 if mask[28] and self._is_recruitment_safe(f, UNIT_STATS['warrior']['upkeep'], UNIT_STATS['warrior']['cost'], True, True):
                     return 28
-                can_arch = mask[29] and self._has_enemy_territory_within(pos, f, MAX_SLOW_UNIT_FRONTLINE_DIST)
-                if can_arch and self._is_recruitment_safe(f, UNIT_STATS['archer']['upkeep'], UNIT_STATS['archer']['cost'], True, True):
+                if can_spawn_archer_here and self._is_recruitment_safe(f, UNIT_STATS['archer']['upkeep'], UNIT_STATS['archer']['cost'], True, True):
                     return 29
 
-            desired_workers = min(MAX_WORKERS_PER_FACTION, 3 if comp < 0.90 else 4)
+            desired_workers = min(MAX_WORKERS_PER_FACTION, 2 if self.turn_count <= 6 else (3 if comp < 0.85 else 4))
             if (
                 my_workers < desired_workers
                 and mask[27]
                 and not sit['under_pressure']
-                and (my_combat >= 1 or not sit['first_contact'])
+                and (my_combat >= 1 or self.turn_count <= 5)
             ):
                 if self._is_recruitment_safe(f, UNIT_STATS['worker']['upkeep'], UNIT_STATS['worker']['cost'], sit['first_contact'], False):
                     return 27
 
-            max_combat_cap = max(4, int(round(comp * 16.00)))
-            if my_combat >= max_combat_cap:
+            max_combat_cap = max(4, int(round(comp * 18.00)))
+            if my_combat >= max_combat_cap and net_inc < AUTO_SPAWN_NET_INCOME_THRESHOLD:
                 return 24
 
-            if tier >= 3 and my_barracks == 0 and my_workers >= 2 and net_inc >= 1.80 and not sit['under_pressure']:
-                if gold < (STRUCT_STATS[2]['cost'] + UNIT_STATS['warrior']['cost']) and gold < MIN_GOLD_RESERVE_FOR_DEFICIT_SPAWN + 6.00:
-                    return 24
-
-            can_spawn_archer_here = mask[29] and self._has_enemy_territory_within(pos, f, MAX_SLOW_UNIT_FRONTLINE_DIST)
             want_more_troops = (
                 my_combat <= sit['enemy_combat_count'] + int(round(comp * 5.00))
                 or sit['under_pressure']
                 or gold >= MIN_GOLD_RESERVE_FOR_DEFICIT_SPAWN + UNIT_STATS['warrior']['cost']
-                or net_inc >= 2.20
+                or net_inc >= 1.80
             )
             if want_more_troops:
                 if my_warriors >= my_archers + 2 and can_spawn_archer_here and self._is_recruitment_safe(f, UNIT_STATS['archer']['upkeep'], UNIT_STATS['archer']['cost'], sit['first_contact'], True):
@@ -622,28 +709,24 @@ class AIStrategistMixin:
                     best_atk = a
             return int(best_atk)
 
-        if u_type == 'worker':
+        if u_type == 'worker' and self.turn_count > AI_BUILD_LOCK_TURNS:
             if mask[29]:
                 dem_site = self._find_demolishable_structure_site(pos, f)
                 if dem_site is not None:
                     ds_r, ds_c = dem_site
-                    dist_dem_home = abs(ds_r - my_castle[0]) + abs(ds_c - my_castle[1])
-                    if (int(self.struct_type[ds_r, ds_c]) == 2 and dist_dem_home < MIN_BARRACKS_CASTLE_DIST) or float(self.tile_yields[ds_r, ds_c]) >= 0.35:
+                    if int(self.struct_type[ds_r, ds_c]) == 2 and not self._is_valid_barracks_distance(ds_r, ds_c):
                         return 29
 
             my_barracks = int(np.sum((self.struct_owner == f) & (self.struct_type == 2)))
             my_towers = int(np.sum((self.struct_owner == f) & (self.struct_type == 1)))
-            dist_to_home = abs(r - my_castle[0]) + abs(c - my_castle[1])
-            dist_to_enemy = abs(r - enemy_castle[0]) + abs(c - enemy_castle[1])
 
-            can_afford_buildings = (net_inc >= 1.40 and gold >= 11.00) or (gold >= 24.00)
-            if can_afford_buildings and tier >= 3:
-                max_barracks_target = 1 if comp < 0.65 else (2 if comp < 0.95 else 3)
-                if mask[27] and my_barracks < max_barracks_target and dist_to_home >= MIN_BARRACKS_CASTLE_DIST and dist_to_enemy <= 20:
+            can_afford_buildings = (net_inc >= 1.00 and gold >= 8.00) or (gold >= 16.00)
+            if can_afford_buildings:
+                max_barracks_target = 1 if comp < 0.60 else (2 if comp < 0.90 else 3)
+                if mask[27] and my_barracks < max_barracks_target:
                     return 27
-                if mask[26] and my_towers < 2 and sit['under_pressure'] and float(self.chokepoint_map[r, c]) >= 0.40:
-                    if float(self.tile_yields[r, c]) <= 0.05:
-                        return 26
+                if mask[26] and my_towers < 3 and (sit['under_pressure'] or sit['first_contact'] or gold >= 14.00):
+                    return 26
 
         best_move_act = 24
         best_move_score = -999.00
@@ -689,9 +772,12 @@ class AIStrategistMixin:
         if not self.is_faction_alive(f):
             return
 
+        self.ai_controlled_factions.add(f)
+
         if clear_traces:
             self.last_ai_turn_traces = []
 
+        self._prevent_bankruptcy_by_disbanding(f)
         self._prepare_faction_turn(faction=f, collect_economy=True)
         if not self.is_faction_alive(f):
             return
@@ -719,6 +805,14 @@ class AIStrategistMixin:
 
             if u_type != 'worker' and len(atk_indices) > 0:
                 act = self.get_strategic_teacher_action('unit', pos, f, tier=f_tier, precomputed_mask=mask)
+            elif u_type == 'worker' and self.turn_count > AI_BUILD_LOCK_TURNS and (mask[26] or mask[27]):
+                teacher_w_act = self.get_strategic_teacher_action('unit', pos, f, tier=f_tier, precomputed_mask=mask)
+                if teacher_w_act in (26, 27):
+                    act = teacher_w_act
+                elif active_model is not None:
+                    act = self._predict_faction_model_action(active_model, 'unit', pos, f, mask, deterministic, temp)
+                else:
+                    act = teacher_w_act
             elif active_model is not None:
                 act = self._predict_faction_model_action(active_model, 'unit', pos, f, mask, deterministic, temp)
                 if act == 24 and (self.units[pos]['hp'] >= self.units[pos]['max_hp'] or u_type != 'worker') and np.any(mask[:24]):
@@ -750,19 +844,34 @@ class AIStrategistMixin:
 
             for site in spawn_sites:
                 curr_gold = self.get_faction_gold(f)
-                if site not in self.units and curr_gold >= UNIT_STATS['worker']['cost']:
-                    mask = self.get_valid_action_mask_for_entity('spawn', site, f)
-                    teacher_spawn = self.get_strategic_teacher_action('spawn', site, f, tier=f_tier, precomputed_mask=mask)
-                    if active_model is not None:
-                        act = self._predict_faction_model_action(active_model, 'spawn', site, f, mask, deterministic, temp)
-                        if act == 24 and teacher_spawn in (27, 28, 29) and mask[teacher_spawn]:
-                            act = teacher_spawn
-                        elif act == 27 and teacher_spawn in (28, 29) and mask[teacher_spawn]:
-                            act = teacher_spawn
-                    else:
-                        act = teacher_spawn
-                    self.apply_entity_action('spawn', site, f, act, precomputed_mask=mask)
+                if site in self.units or curr_gold < UNIT_STATS['worker']['cost']:
+                    continue
 
+                _, _, live_net_inc, _, _ = self.get_faction_economy_stats(f)
+                mask = self.get_valid_action_mask_for_entity('spawn', site, f)
+                teacher_spawn = self.get_strategic_teacher_action('spawn', site, f, tier=f_tier, precomputed_mask=mask)
+
+                if live_net_inc >= AUTO_SPAWN_NET_INCOME_THRESHOLD:
+                    act = teacher_spawn
+                elif active_model is not None:
+                    act = self._predict_faction_model_action(active_model, 'spawn', site, f, mask, deterministic, temp)
+                    if act == 24 and teacher_spawn in (27, 28, 29) and mask[teacher_spawn]:
+                        act = teacher_spawn
+                    elif act == 27 and teacher_spawn in (28, 29) and mask[teacher_spawn]:
+                        act = teacher_spawn
+                else:
+                    act = teacher_spawn
+
+                if act in (27, 28, 29):
+                    u_key = {27: 'worker', 28: 'warrior', 29: 'archer'}[act]
+                    u_cost = float(UNIT_STATS[u_key]['cost'])
+                    u_upk = float(UNIT_STATS[u_key]['upkeep'])
+                    if (curr_gold - u_cost) + (live_net_inc - u_upk) < 0.00:
+                        act = 24
+
+                self.apply_entity_action('spawn', site, f, act, precomputed_mask=mask)
+
+        self._prevent_bankruptcy_by_disbanding(f)
         self.heal_all_unmoved_units(f)
         moves_cnt = sum(1 for t in self.last_ai_turn_traces if t["kind"] == "move" and t.get("faction") == f)
         atks_cnt = sum(1 for t in self.last_ai_turn_traces if t["kind"] == "attack" and t.get("faction") == f)
@@ -834,12 +943,9 @@ class AIStrategistMixin:
             i_econ = 1.00 if yield_plane[r, c] >= 0.15 else 0.45
             i_cluster = 0.90
         elif act_val in (26, 27) and rid == ROLE_IDS["worker"]:
-            dist_home = abs(r - (self.grid_size - 1)) + abs(c - 0)
-            if act_val == 27 and dist_home < MIN_BARRACKS_CASTLE_DIST:
+            if act_val == 27 and not self._is_valid_barracks_distance(r, c):
                 i_pos = 0.15
                 i_econ = 0.30
-            elif yield_plane[r, c] >= 0.15:
-                i_econ = 0.20
             else:
                 i_econ = 0.95
                 i_pos = 0.95

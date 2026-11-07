@@ -16,7 +16,7 @@ import numpy as np
 from game_config import (
     UNIT_STATS, STRUCT_STATS, CASTLE_MAX_HP, MAX_STEPS,
     MAX_GOLD, SUPPLY_LIMIT, SUPPLY_TAX_PER_UNIT,
-    RELATIVE_OFFSETS, USERS_DB_FILE, POOL_DIR,
+    MAX_WORKERS_PER_FACTION, RELATIVE_OFFSETS, USERS_DB_FILE, POOL_DIR,
     MIN_TRAINING_EFFICIENCY, DISBAND_REFUND_RATIO, DEMOLISH_REFUND_RATIO
 )
 from localization import (
@@ -393,6 +393,7 @@ class GameRoom:
         lang = normalize_lang(host_prof.get("lang", "en"))
 
         self.env = MicroRTSEnv(mode="manual_p2", record_telemetry=True, lang=lang, num_players=self.max_players)
+        self.env.ai_controlled_factions = {f for f in self.active_factions if self.slots[f]["kind"] == "ai"}
         self.active_ai_ratings = {}
         self.selected_by_user = {}
         self.winner_faction = None
@@ -408,6 +409,7 @@ class GameRoom:
                 s["username"] = f"AI [{lbl}]"
                 self.active_ai_ratings[f] = r_val
             else:
+                self.env.ai_controlled_factions.discard(f)
                 u_prof = UserProfileManager.get_or_create(s["username"])
                 u_r = float(u_prof.get("base_rating", 35.00))
                 comp = float(np.clip(0.30 + (u_r / 100.00) * 0.75, 0.25, 1.35))
@@ -475,7 +477,9 @@ class GameRoom:
             self.env.record_turn_efficiency_snapshot()
 
         if self.env.is_faction_alive(self.current_turn_faction):
-            self.env._prepare_faction_turn(faction=self.current_turn_faction, collect_economy=True)
+            next_slot = self.slots.get(self.current_turn_faction, {})
+            if next_slot.get("kind") == "human":
+                self.env._prepare_faction_turn(faction=self.current_turn_faction, collect_economy=True)
 
     def _apply_in_match_dda_Adjustments(self):
         if self.env is None:
@@ -697,6 +701,7 @@ class GameRoom:
 
         is_my_turn = (self.status == "playing" and my_faction is not None and self.current_turn_faction == my_faction)
         sel_pos = self.selected_by_user.get(username)
+        my_workers_cnt = sum(1 for u in env.units.values() if u['faction'] == my_faction and u['type'] == 'worker') if my_faction is not None else 0
 
         valid_moves = []
         valid_attacks = []
@@ -776,7 +781,7 @@ class GameRoom:
                         if is_my_turn:
                             if (sr, sc) not in env.units:
                                 my_gold = env.get_faction_gold(my_faction)
-                                inspector["can_spawn_worker"] = bool(my_gold >= UNIT_STATS['worker']['cost'])
+                                inspector["can_spawn_worker"] = bool(my_gold >= UNIT_STATS['worker']['cost'] and my_workers_cnt < MAX_WORKERS_PER_FACTION)
                                 inspector["can_spawn_warrior"] = bool(my_gold >= UNIT_STATS['warrior']['cost'])
                                 inspector["can_spawn_archer"] = bool(my_gold >= UNIT_STATS['archer']['cost'])
                             else:
@@ -793,7 +798,7 @@ class GameRoom:
                     lines.append(get_text(norm_l, "struct_line", name=st_name, hp=float(env.struct_hp[sr, sc]), max_hp=st_info['max_hp']))
                     if is_my_turn and st_t == 2 and st_own == my_faction and (sr, sc) not in env.units:
                         my_gold = env.get_faction_gold(my_faction)
-                        inspector["can_spawn_worker"] = bool(my_gold >= UNIT_STATS['worker']['cost'])
+                        inspector["can_spawn_worker"] = bool(my_gold >= UNIT_STATS['worker']['cost'] and my_workers_cnt < MAX_WORKERS_PER_FACTION)
                         inspector["can_spawn_warrior"] = bool(my_gold >= UNIT_STATS['warrior']['cost'])
                         inspector["can_spawn_archer"] = bool(my_gold >= UNIT_STATS['archer']['cost'])
 
@@ -836,8 +841,14 @@ class GameRoom:
         turn_slot = self.slots.get(self.current_turn_faction, {})
         turn_owner_name = turn_slot.get("username") or f"Faction {self.current_turn_faction}"
 
-        p2_compat = factions_data.get(str(my_faction or 2), factions_data.get("2", factions_data["1"]))
-        p1_compat = factions_data.get("1", p2_compat)
+        my_f_key = str(my_faction if my_faction is not None else 2)
+        opp_f_candidates = [f for f in self.active_factions if str(f) != my_f_key and env.is_faction_alive(f)]
+        if not opp_f_candidates:
+            opp_f_candidates = [f for f in self.active_factions if str(f) != my_f_key]
+        opp_f_key = str(opp_f_candidates[0]) if opp_f_candidates else "1"
+
+        p2_compat = factions_data.get(my_f_key, factions_data.get("2", factions_data["1"]))
+        p1_compat = factions_data.get(opp_f_key, factions_data.get("1", p2_compat))
 
         base_payload.update({
             "turn": int(env.turn_count),

@@ -9,7 +9,7 @@ import game_config
 from game_config import (
     GRID_SIZE, MAX_STEPS, MAX_GOLD, INITIAL_GOLD, HEAL_PCT,
     SUPPLY_LIMIT, SUPPLY_TAX_PER_UNIT, CASTLE_MAX_HP,
-    MAX_WORKERS_PER_FACTION, MIN_TRAINING_EFFICIENCY,
+    MAX_WORKERS_PER_FACTION, AI_BUILD_LOCK_TURNS, MIN_TRAINING_EFFICIENCY,
     DISBAND_REFUND_RATIO, DEMOLISH_REFUND_RATIO,
     MIN_BARRACKS_CASTLE_DIST, MAX_SLOW_UNIT_FRONTLINE_DIST,
     OSCILLATION_MEMORY_LEN, EFFICIENCY_REWARDS,
@@ -54,6 +54,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
 
         self.opponent_model = None
         self.faction_models = {1: None, 2: None, 3: None, 4: None}
+        self.ai_controlled_factions = {1, 2, 3, 4} if self.mode == "selfplay" else {1}
         self.curriculum_tier = 5
         self.faction_tiers = {1: 5, 2: 5, 3: 5, 4: 5}
         self.base_gen_idx = 50.00
@@ -145,6 +146,11 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
     def p2_gold(self, val):
         self.gold[2] = round(float(val), 2)
 
+    def is_faction_ai(self, faction: int) -> bool:
+        if self.mode == "selfplay":
+            return True
+        return int(faction) in self.ai_controlled_factions
+
     def get_faction_gold(self, faction: int) -> float:
         return float(self.gold.get(int(faction), 0.00))
 
@@ -231,6 +237,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
 
     def set_faction_ai_rating(self, faction: int, gen_rating: float):
         f = int(faction)
+        self.ai_controlled_factions.add(f)
         max_pool_r = PoolRegistry.get_max_rating()
         r_clamped = round(float(np.clip(gen_rating, 0.00, max(100.00, max_pool_r))), 2)
         comp = float(np.clip(0.30 + (r_clamped / 100.00) * 0.75, 0.25, 1.35))
@@ -595,6 +602,15 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
                 return True
         return False
 
+    def _is_valid_barracks_distance(self, r: int, c: int) -> bool:
+        for cf in self.active_factions:
+            if not self.is_faction_alive(cf):
+                continue
+            cr, cc = self.castle_positions[cf]
+            if abs(int(r) - cr) + abs(int(c) - cc) < MIN_BARRACKS_CASTLE_DIST:
+                return False
+        return True
+
     def is_tile_built_up(self, r: int, c: int) -> bool:
         if self.is_castle_tile(r, c, active_only=True):
             return True
@@ -751,7 +767,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
                     self.archived_units.append(u_dead)
                 new_gold = 0.00
                 self._fp_dirty = True
-                msg_key = "bankruptcy_ai" if f == 1 else "bankruptcy_player"
+                msg_key = "bankruptcy_ai" if self.is_faction_ai(f) else "bankruptcy_player"
                 self.add_localized_event(msg_key)
             else:
                 new_gold = min(MAX_GOLD, new_gold)
@@ -1110,40 +1126,6 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         u['efficiency'] = round(u['efficiency'] + eff_cap + bonus * EFFICIENCY_REWARDS["harvest_bonus_mult"], 2)
         return float(bonus)
 
-    def _is_logistically_safe_to_build(self, r: int, c: int, faction: int) -> bool:
-        if float(self.chokepoint_map[r, c]) >= 1.00:
-            return False
-
-        f = int(faction)
-        my_castle = self.castle_positions[f]
-        if abs(r - my_castle[0]) + abs(c - my_castle[1]) <= 1:
-            return False
-
-        near_obstacle = False
-        if r == 0 or r == self.grid_size - 1 or c == 0 or c == self.grid_size - 1:
-            near_obstacle = True
-        else:
-            for dr in (-1, 0, 1):
-                for dc in (-1, 0, 1):
-                    if dr == 0 and dc == 0:
-                        continue
-                    nr, nc = r + dr, c + dc
-                    if int(self.terrain[nr, nc]) == 0 or int(self.struct_type[nr, nc]) == 1:
-                        near_obstacle = True
-                        break
-                if near_obstacle:
-                    break
-
-        if not near_obstacle:
-            return True
-
-        target_castle = self._get_primary_enemy_castle(f, my_castle)
-        base_len = self._shortest_path_length(my_castle, target_castle)
-        new_len = self._shortest_path_length(my_castle, target_castle, block_pos=(r, c))
-        if new_len >= 999 or (new_len - base_len) > 4:
-            return False
-        return True
-
     def _find_adjacent_tower_site(self, pos: tuple, faction: int):
         r, c = pos
         f = int(faction)
@@ -1155,8 +1137,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
                 if int(self.territory[nr, nc]) not in enemies and int(self.terrain[nr, nc]) != 0:
                     if not self.is_castle_tile(nr, nc, active_only=False):
                         if int(self.struct_type[nr, nc]) == 0 and (nr, nc) not in self.units:
-                            if self._is_logistically_safe_to_build(nr, nc, f):
-                                candidates.append((int(nr), int(nc)))
+                            candidates.append((int(nr), int(nc)))
         if not candidates:
             return None
         enemy_castle = self._get_primary_enemy_castle(f, pos)
@@ -1164,15 +1145,13 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
             candidates,
             key=lambda p: (
                 (abs(p[0] - enemy_castle[0]) + abs(p[1] - enemy_castle[1]))
-                + float(self.tile_yields[p[0], p[1]]) * 12.00
-                - (1.50 if float(self.chokepoint_map[p[0], p[1]]) == 0.40 else 0.00)
+                + float(self.tile_yields[p[0], p[1]]) * 8.00
             )
         )
 
     def _find_barracks_build_site(self, pos: tuple, faction: int, enforce_ai_distance: bool = False):
         r, c = pos
         f = int(faction)
-        my_castle = self.castle_positions[f]
         enemy_castle = self._get_primary_enemy_castle(f, pos)
         enemies = set(self.get_enemy_factions(f))
 
@@ -1189,18 +1168,17 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
                 continue
             if (nr, nc) != (r, c) and (nr, nc) in self.units:
                 continue
-            dist_home = abs(nr - my_castle[0]) + abs(nc - my_castle[1])
-            if enforce_ai_distance and dist_home < MIN_BARRACKS_CASTLE_DIST:
-                continue
-            if enforce_ai_distance and float(self.tile_yields[nr, nc]) > 0.05:
+            if not self._is_valid_barracks_distance(nr, nc):
                 continue
             valid_sites.append((int(nr), int(nc)))
 
         if not valid_sites:
             return None
+        if not enforce_ai_distance and (int(r), int(c)) in valid_sites:
+            return (int(r), int(c))
         return min(
             valid_sites,
-            key=lambda p: (abs(p[0] - enemy_castle[0]) + abs(p[1] - enemy_castle[1])) + float(self.tile_yields[p[0], p[1]]) * 15.00
+            key=lambda p: (abs(p[0] - enemy_castle[0]) + abs(p[1] - enemy_castle[1])) + float(self.tile_yields[p[0], p[1]]) * 8.00
         )
 
     def execute_worker_build(self, pos: tuple, build_type: int) -> bool:
@@ -1210,12 +1188,15 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         if u['type'] != 'worker' or not u['ready']:
             return False
         f = int(u['faction'])
+        is_ai = self.is_faction_ai(f)
+        if is_ai and self.turn_count <= AI_BUILD_LOCK_TURNS:
+            return False
+
         cost = STRUCT_STATS[build_type]['cost']
         gold = self.get_faction_gold(f)
         if gold < cost:
             return False
 
-        is_ai = (f == 1 or self.mode == "selfplay")
         if build_type == 2:
             target_site = self._find_barracks_build_site(pos, f, enforce_ai_distance=is_ai)
         else:
@@ -1268,7 +1249,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
             if curr_workers >= MAX_WORKERS_PER_FACTION:
                 return False
 
-        is_ai = enforce_ai_rules if enforce_ai_rules is not None else (f == 1 or self.mode == "selfplay")
+        is_ai = enforce_ai_rules if enforce_ai_rules is not None else self.is_faction_ai(f)
         if is_ai and UNIT_STATS[unit_type]['move_range'] <= 1:
             if not self._has_enemy_territory_within(struct_pos, f, MAX_SLOW_UNIT_FRONTLINE_DIST):
                 return False
@@ -1289,7 +1270,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         r, c = pos
         f = int(faction)
         gold = self.get_faction_gold(f)
-        is_ai = (f == 1 or self.mode == "selfplay")
+        is_ai = self.is_faction_ai(f)
 
         if entity_kind == 'unit':
             if pos not in self.units or not self.units[pos]['ready']:
@@ -1312,10 +1293,11 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
             if u['type'] == 'worker':
                 if int(self.terrain[r, c]) != 0 and self.get_effective_tile_yield(r, c) > 0.00:
                     mask[25] = True
-                if gold >= STRUCT_STATS[1]['cost'] and self._find_adjacent_tower_site(pos, f) is not None:
-                    mask[26] = True
-                if gold >= STRUCT_STATS[2]['cost'] and self._find_barracks_build_site(pos, f, enforce_ai_distance=is_ai) is not None:
-                    mask[27] = True
+                if not is_ai or self.turn_count > AI_BUILD_LOCK_TURNS:
+                    if gold >= STRUCT_STATS[1]['cost'] and self._find_adjacent_tower_site(pos, f) is not None:
+                        mask[26] = True
+                    if gold >= STRUCT_STATS[2]['cost'] and self._find_barracks_build_site(pos, f, enforce_ai_distance=is_ai) is not None:
+                        mask[27] = True
                 if self._find_demolishable_structure_site(pos, f) is not None:
                     mask[29] = True
 
