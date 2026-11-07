@@ -17,6 +17,20 @@ MAX_SLOW_UNIT_FRONTLINE_DIST = 10
 OSCILLATION_MEMORY_LEN = 6
 OSCILLATION_PENALTY = 40.00
 
+FACTION_CASTLE_POSITIONS = {
+    1: (GRID_SIZE - 1, 0),
+    2: (0, GRID_SIZE - 1),
+    3: (0, 0),
+    4: (GRID_SIZE - 1, GRID_SIZE - 1)
+}
+
+FACTION_COLORS = {
+    1: {"bg": "#632227", "unit": "#eb3b5a", "struct": "#c23616", "castle": "#83142c"},
+    2: {"bg": "#1b3b6f", "unit": "#0fbcf9", "struct": "#0097e6", "castle": "#0a3d62"},
+    3: {"bg": "#1e5128", "unit": "#2ecc71", "struct": "#27ae60", "castle": "#14361b"},
+    4: {"bg": "#6e511b", "unit": "#f1c40f", "struct": "#f39c12", "castle": "#4d3812"}
+}
+
 EFFICIENCY_REWARDS = {
     "neutral_capture_base": 3.50,
     "neutral_capture_yield_mult": 12.00,

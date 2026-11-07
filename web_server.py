@@ -1,5 +1,8 @@
 import os
 import json
+import time
+import uuid
+import hashlib
 import threading
 import zipfile
 from typing import Optional
@@ -28,7 +31,23 @@ os.makedirs("templates", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 USERS_LOCK = threading.Lock()
-ACTIVE_SESSIONS = {}
+ROOMS_LOCK = threading.RLock()
+ROOMS = {}
+USER_ACTIVE_ROOM = {}
+
+FACTION_META = {
+    1: {"key": "red", "name_en": "Red Empire (Bottom-Left)", "name_uk": "Червона Імперія (Лівий Низ)", "color": "#eb3b5a"},
+    2: {"key": "blue", "name_en": "Blue Alliance (Top-Right)", "name_uk": "Синій Альянс (Правий Верх)", "color": "#0fbcf9"},
+    3: {"key": "green", "name_en": "Green Order (Top-Left)", "name_uk": "Зелений Орден (Лівий Верх)", "color": "#2ecc71"},
+    4: {"key": "yellow", "name_en": "Golden Dynasty (Bottom-Right)", "name_uk": "Золота Династія (Правий Низ)", "color": "#feca57"}
+}
+
+def get_faction_display_name(faction: int, lang: str = "en") -> str:
+    meta = FACTION_META.get(int(faction), FACTION_META[1])
+    return meta["name_uk"] if normalize_lang(lang) == "uk" else meta["name_en"]
+
+def hash_password(raw_password: str) -> str:
+    return hashlib.sha256(str(raw_password).encode("utf-8")).hexdigest()
 
 def clean_for_json(obj):
     if isinstance(obj, dict):
@@ -43,108 +62,647 @@ def clean_for_json(obj):
 
 class UserProfileManager:
     @staticmethod
-    def load_all() -> dict:
+    def _load_unlocked() -> dict:
         os.makedirs(POOL_DIR, exist_ok=True)
-        with USERS_LOCK:
-            if os.path.exists(USERS_DB_FILE):
-                try:
-                    with open(USERS_DB_FILE, "r", encoding="utf-8") as f:
-                        return json.load(f)
-                except Exception:
-                    pass
-            return {}
+        if os.path.exists(USERS_DB_FILE):
+            try:
+                with open(USERS_DB_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
 
     @staticmethod
-    def get_guest_name_for_ip(ip: str) -> str:
-        db = UserProfileManager.load_all()
-        with USERS_LOCK:
-            ip_map = db.get("__ip_map__", {})
-            if ip in ip_map:
-                return ip_map[ip]
+    def _save_unlocked(db: dict):
+        os.makedirs(POOL_DIR, exist_ok=True)
+        tmp_file = USERS_DB_FILE + ".tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(clean_for_json(db), f, indent=2, ensure_ascii=False)
+        os.replace(tmp_file, USERS_DB_FILE)
 
-            counter = db.get("__guest_counter__", 0) + 1
+    @staticmethod
+    def load_all() -> dict:
+        with USERS_LOCK:
+            return UserProfileManager._load_unlocked()
+
+    @staticmethod
+    def create_guest_for_ip(ip: str, lang: str = "en") -> dict:
+        norm_l = normalize_lang(lang)
+        with USERS_LOCK:
+            db = UserProfileManager._load_unlocked()
+            ip_map = db.get("__ip_map__", {})
+            if ip in ip_map and ip_map[ip] in db:
+                prof = db[ip_map[ip]]
+                if "lang" not in prof:
+                    prof["lang"] = norm_l
+                UserProfileManager._save_unlocked(db)
+                return prof
+
+            counter = int(db.get("__guest_counter__", 0)) + 1
             guest_name = f"Guest{counter}"
+            while guest_name in db:
+                counter += 1
+                guest_name = f"Guest{counter}"
 
             ip_map[ip] = guest_name
             db["__ip_map__"] = ip_map
             db["__guest_counter__"] = counter
 
-            if guest_name not in db:
-                db[guest_name] = {
-                    "username": guest_name,
-                    "lang": "en",
+            prof = {
+                "username": guest_name,
+                "is_registered": False,
+                "password_hash": "",
+                "lang": norm_l,
+                "base_rating": 35.00,
+                "matches_played": 0,
+                "recent_wins": [],
+                "prev_winrate": 0.50,
+                "created_generations": []
+            }
+            db[guest_name] = prof
+            UserProfileManager._save_unlocked(db)
+            return prof
+
+    @staticmethod
+    def authenticate_or_register(username: str, password: str, mode: str = "login", lang: str = "en") -> tuple:
+        uname = str(username).strip()
+        pwd = str(password).strip()
+        norm_l = normalize_lang(lang)
+
+        if not uname or len(uname) < 2 or uname.startswith("__"):
+            msg = "Ім'я користувача має містити щонайменше 2 символи." if norm_l == "uk" else "Username must be at least 2 characters."
+            return False, msg, None
+
+        if not pwd or len(pwd) < 3:
+            msg = "Пароль має містити щонайменше 3 символи." if norm_l == "uk" else "Password must be at least 3 characters."
+            return False, msg, None
+
+        pwd_hash = hash_password(pwd)
+
+        with USERS_LOCK:
+            db = UserProfileManager._load_unlocked()
+            existing = db.get(uname)
+
+            if mode == "register":
+                if existing and existing.get("is_registered") and existing.get("password_hash"):
+                    msg = "Цей нікнейм вже зареєстровано. Увійдіть зі своїм паролем." if norm_l == "uk" else "Username already registered. Please log in."
+                    return False, msg, None
+
+                base_r = float(existing.get("base_rating", 35.00)) if existing else 35.00
+                m_played = int(existing.get("matches_played", 0)) if existing else 0
+                r_wins = list(existing.get("recent_wins", [])) if existing else []
+                p_wr = float(existing.get("prev_winrate", 0.50)) if existing else 0.50
+                c_gens = list(existing.get("created_generations", [])) if existing else []
+
+                prof = {
+                    "username": uname,
+                    "is_registered": True,
+                    "password_hash": pwd_hash,
+                    "lang": norm_l,
+                    "base_rating": round(base_r, 2),
+                    "matches_played": m_played,
+                    "recent_wins": r_wins,
+                    "prev_winrate": round(p_wr, 4),
+                    "created_generations": c_gens
+                }
+                db[uname] = prof
+                UserProfileManager._save_unlocked(db)
+                return True, "OK", prof
+
+            if not existing:
+                prof = {
+                    "username": uname,
+                    "is_registered": True,
+                    "password_hash": pwd_hash,
+                    "lang": norm_l,
                     "base_rating": 35.00,
                     "matches_played": 0,
                     "recent_wins": [],
                     "prev_winrate": 0.50,
                     "created_generations": []
                 }
+                db[uname] = prof
+                UserProfileManager._save_unlocked(db)
+                return True, "OK", prof
 
-            with open(USERS_DB_FILE, "w", encoding="utf-8") as f:
-                json.dump(db, f, indent=2, ensure_ascii=False)
+            stored_hash = existing.get("password_hash", "")
+            if not stored_hash:
+                existing["is_registered"] = True
+                existing["password_hash"] = pwd_hash
+                existing["lang"] = existing.get("lang", norm_l)
+                db[uname] = existing
+                UserProfileManager._save_unlocked(db)
+                return True, "OK", existing
 
-            return guest_name
+            if stored_hash != pwd_hash:
+                msg = "Невірний пароль для цього акаунта." if norm_l == "uk" else "Invalid password for this account."
+                return False, msg, None
+
+            return True, "OK", existing
 
     @staticmethod
-    def get_or_create(username: str) -> dict:
-        uname = username.strip() or "Guest1"
-        db = UserProfileManager.load_all()
+    def get_or_create(username: str, lang: str = "en") -> dict:
+        uname = str(username).strip() or "Guest1"
+        norm_l = normalize_lang(lang)
         with USERS_LOCK:
+            db = UserProfileManager._load_unlocked()
             if uname not in db:
                 db[uname] = {
                     "username": uname,
-                    "lang": "en",
+                    "is_registered": False,
+                    "password_hash": "",
+                    "lang": norm_l,
                     "base_rating": 35.00,
                     "matches_played": 0,
                     "recent_wins": [],
                     "prev_winrate": 0.50,
                     "created_generations": []
                 }
-                with open(USERS_DB_FILE, "w", encoding="utf-8") as f:
-                    json.dump(db, f, indent=2, ensure_ascii=False)
+                UserProfileManager._save_unlocked(db)
             elif "lang" not in db[uname]:
-                db[uname]["lang"] = "en"
-            return db[uname]
+                db[uname]["lang"] = norm_l
+                UserProfileManager._save_unlocked(db)
+            return dict(db[uname])
 
     @staticmethod
     def update_profile(username: str, profile_data: dict):
-        db = UserProfileManager.load_all()
+        uname = str(username).strip()
+        if not uname or uname.startswith("__"):
+            return
         with USERS_LOCK:
-            db[username] = clean_for_json(profile_data)
-            with open(USERS_DB_FILE, "w", encoding="utf-8") as f:
-                json.dump(db, f, indent=2, ensure_ascii=False)
+            db = UserProfileManager._load_unlocked()
+            existing = db.get(uname, {})
+            merged = dict(existing)
+            merged.update(clean_for_json(profile_data))
+            if existing.get("password_hash") and not merged.get("password_hash"):
+                merged["password_hash"] = existing["password_hash"]
+                merged["is_registered"] = True
+            db[uname] = merged
+            UserProfileManager._save_unlocked(db)
 
-class GameSession:
-    def __init__(self, username: str):
-        self.username = username
-        self.profile = UserProfileManager.get_or_create(username)
-        self.lang = normalize_lang(self.profile.get("lang", "en"))
-        self.env = MicroRTSEnv(mode="manual_p2", record_telemetry=True, lang=self.lang)
-        self.base_rating = float(self.profile.get("base_rating", 35.00))
-        self.active_rating = self.base_rating
-        self.env.set_dda_generation(self.active_rating)
-        self.env._prepare_faction_turn(faction=2, collect_economy=False)
-        self.selected_pos = None
-        self.last_evolution_report = None
+    @staticmethod
+    def set_user_lang(username: str, lang: str) -> dict:
+        uname = str(username).strip()
+        norm_l = normalize_lang(lang)
+        prof = UserProfileManager.get_or_create(uname, norm_l)
+        prof["lang"] = norm_l
+        UserProfileManager.update_profile(uname, prof)
+        return prof
+
+class GameRoom:
+    def __init__(self, room_id: str, name: str, host: str, max_players: int = 2, is_private: bool = False, password: str = ""):
+        self.room_id = room_id
+        self.name = name.strip() or f"Room-{room_id}"
+        self.host = host
+        self.max_players = 4 if int(max_players) == 4 else 2
+        self.is_private = bool(is_private and len(str(password).strip()) > 0)
+        self.password_hash = hash_password(str(password).strip()) if self.is_private else ""
+        self.status = "waiting"
+        self.created_at = int(time.time())
+
+        self.active_factions = [1, 2, 3, 4] if self.max_players == 4 else [1, 2]
+        self.slots = {}
+        for f in self.active_factions:
+            self.slots[f] = {
+                "faction": f,
+                "kind": "empty",
+                "username": None,
+                "ai_rating": 35.00,
+                "ai_label": "None"
+            }
+
+        self.slots[2] = {
+            "faction": 2,
+            "kind": "human",
+            "username": host,
+            "ai_rating": 0.00,
+            "ai_label": "Human"
+        }
+
+        self.env: Optional[MicroRTSEnv] = None
+        self.current_turn_faction = 2
+        self.selected_by_user = {}
+        self.active_ai_ratings = {}
         self.is_training_new_gen = False
+        self.last_evolution_report = None
+        self.winner_faction = None
+        self.winner_name = None
 
-    def set_language(self, lang: str):
-        self.lang = normalize_lang(lang)
-        self.env.set_language(self.lang)
-        self.profile["lang"] = self.lang
-        UserProfileManager.update_profile(self.username, self.profile)
+    def get_user_faction(self, username: str) -> Optional[int]:
+        for f in self.active_factions:
+            s = self.slots[f]
+            if s["kind"] == "human" and s["username"] == username:
+                return f
+        return None
 
-    def serialize_state(self) -> dict:
-        inc1, upk1, net1, t1, u1 = self.env.get_faction_economy_stats(1)
-        inc2, upk2, net2, t2, u2 = self.env.get_faction_economy_stats(2)
-        tax1 = round(max(0, u1 - SUPPLY_LIMIT) * SUPPLY_TAX_PER_UNIT, 2)
-        tax2 = round(max(0, u2 - SUPPLY_LIMIT) * SUPPLY_TAX_PER_UNIT, 2)
+    def is_full(self) -> bool:
+        return all(self.slots[f]["kind"] in ("human", "ai") for f in self.active_factions)
+
+    def human_count(self) -> int:
+        return sum(1 for f in self.active_factions if self.slots[f]["kind"] == "human")
+
+    def ai_count(self) -> int:
+        return sum(1 for f in self.active_factions if self.slots[f]["kind"] == "ai")
+
+    def filled_count(self) -> int:
+        return sum(1 for f in self.active_factions if self.slots[f]["kind"] != "empty")
+
+    def verify_password(self, password: str) -> bool:
+        if not self.is_private:
+            return True
+        return hash_password(str(password or "").strip()) == self.password_hash
+
+    def add_human_player(self, username: str, preferred_faction: int = None) -> tuple:
+        existing_f = self.get_user_faction(username)
+        if existing_f is not None:
+            return True, existing_f
+        if self.status != "waiting":
+            return False, None
+
+        if preferred_faction in self.active_factions and self.slots[preferred_faction]["kind"] == "empty":
+            target_f = int(preferred_faction)
+        else:
+            order = [2, 1, 3, 4] if self.max_players == 4 else [2, 1]
+            empty_f = [f for f in order if f in self.active_factions and self.slots[f]["kind"] == "empty"]
+            if not empty_f:
+                return False, None
+            target_f = empty_f[0]
+
+        self.slots[target_f] = {
+            "faction": target_f,
+            "kind": "human",
+            "username": username,
+            "ai_rating": 0.00,
+            "ai_label": "Human"
+        }
+        return True, target_f
+
+    def add_ai_to_slot(self, slot_faction: int = None, ai_rating: float = None) -> bool:
+        if self.status != "waiting":
+            return False
+
+        target_f = None
+        if slot_faction in self.active_factions and self.slots[int(slot_faction)]["kind"] == "empty":
+            target_f = int(slot_faction)
+        else:
+            order = [1, 3, 4, 2] if self.max_players == 4 else [1, 2]
+            for f in order:
+                if f in self.active_factions and self.slots[f]["kind"] == "empty":
+                    target_f = f
+                    break
+
+        if target_f is None:
+            return False
+
+        host_prof = UserProfileManager.get_or_create(self.host)
+        r_val = float(ai_rating) if ai_rating is not None else float(host_prof.get("base_rating", 35.00))
+        r_val = round(float(np.clip(r_val, 0.00, max(100.00, PoolRegistry.get_max_rating()))), 2)
+        entry = PoolRegistry.select_closest_generation(r_val)
+        lbl = str(entry.get("label", f"Gen-{int(round(r_val))}"))
+
+        self.slots[target_f] = {
+            "faction": target_f,
+            "kind": "ai",
+            "username": f"AI [{lbl}]",
+            "ai_rating": r_val,
+            "ai_label": lbl
+        }
+        return True
+
+    def clear_slot(self, slot_faction: int) -> Optional[str]:
+        if self.status != "waiting":
+            return None
+        f = int(slot_faction)
+        if f not in self.active_factions:
+            return None
+        removed_user = self.slots[f]["username"] if self.slots[f]["kind"] == "human" else None
+        self.slots[f] = {
+            "faction": f,
+            "kind": "empty",
+            "username": None,
+            "ai_rating": 35.00,
+            "ai_label": "None"
+        }
+        return removed_user
+
+    def start_match(self) -> bool:
+        if not self.is_full():
+            return False
+
+        host_prof = UserProfileManager.get_or_create(self.host)
+        lang = normalize_lang(host_prof.get("lang", "en"))
+
+        self.env = MicroRTSEnv(mode="manual_p2", record_telemetry=True, lang=lang, num_players=self.max_players)
+        self.active_ai_ratings = {}
+        self.selected_by_user = {}
+        self.winner_faction = None
+        self.winner_name = None
+
+        for f in self.active_factions:
+            s = self.slots[f]
+            if s["kind"] == "ai":
+                r_val = float(s.get("ai_rating", 35.00))
+                entry = self.env.set_faction_ai_rating(f, r_val)
+                lbl = str(entry.get("label", f"Gen-{int(round(r_val))}"))
+                s["ai_label"] = lbl
+                s["username"] = f"AI [{lbl}]"
+                self.active_ai_ratings[f] = r_val
+            else:
+                u_prof = UserProfileManager.get_or_create(s["username"])
+                u_r = float(u_prof.get("base_rating", 35.00))
+                comp = float(np.clip(0.30 + (u_r / 100.00) * 0.75, 0.25, 1.35))
+                self.env.set_faction_competence(f, comp)
+
+        self.status = "playing"
+        turn_order = self._get_turn_order()
+        self.current_turn_faction = turn_order[0]
+        self.env._prepare_faction_turn(faction=self.current_turn_faction, collect_economy=False)
+        self._advance_ai_turns_if_needed()
+        return True
+
+    def _get_turn_order(self) -> list:
+        return [2, 1, 3, 4] if self.max_players == 4 else [2, 1]
+
+    def _advance_ai_turns_if_needed(self):
+        if self.status != "playing" or self.env is None:
+            return
+
+        order = self._get_turn_order()
+        safety_steps = 0
+        cleared_traces_this_chain = False
+
+        while self.status == "playing" and safety_steps < 16:
+            safety_steps += 1
+            winner_f = self.env.get_match_winner()
+            if winner_f is not None:
+                self._finalize_match(winner_f)
+                return
+
+            curr_f = self.current_turn_faction
+            if not self.env.is_faction_alive(curr_f):
+                self._step_to_next_faction(order)
+                continue
+
+            slot = self.slots[curr_f]
+            if slot["kind"] == "human":
+                return
+
+            f_model = self.env.faction_models.get(curr_f)
+            self.env.execute_full_ai_turn(
+                faction=curr_f,
+                model=f_model,
+                deterministic=False,
+                clear_traces=(not cleared_traces_this_chain)
+            )
+            cleared_traces_this_chain = True
+
+            winner_f = self.env.get_match_winner()
+            if winner_f is not None:
+                self._finalize_match(winner_f)
+                return
+
+            self._step_to_next_faction(order)
+
+    def _step_to_next_faction(self, order: list):
+        idx = order.index(self.current_turn_faction)
+        next_idx = (idx + 1) % len(order)
+        wrapped_round = (next_idx == 0)
+        self.current_turn_faction = order[next_idx]
+
+        if wrapped_round:
+            self.env.turn_count += 1
+            self._apply_in_match_dda_Adjustments()
+            self.env.record_turn_efficiency_snapshot()
+
+        if self.env.is_faction_alive(self.current_turn_faction):
+            self.env._prepare_faction_turn(faction=self.current_turn_faction, collect_economy=True)
+
+    def _apply_in_match_dda_Adjustments(self):
+        if self.env is None:
+            return
+        if self.env.turn_count <= 10 or self.env.turn_count % 3 == 0:
+            human_factions = [f for f in self.active_factions if self.slots[f]["kind"] == "human" and self.env.is_faction_alive(f)]
+            if not human_factions:
+                return
+            primary_human_f = human_factions[0]
+            for f in self.active_factions:
+                if self.slots[f]["kind"] == "ai" and self.env.is_faction_alive(f):
+                    curr_r = float(self.active_ai_ratings.get(f, self.slots[f]["ai_rating"]))
+                    new_r = self.env.compute_surge_dda_step(
+                        current_rating=curr_r,
+                        is_early_turn=(self.env.turn_count <= 10),
+                        player_faction=primary_human_f,
+                        ai_faction=f
+                    )
+                    self.active_ai_ratings[f] = new_r
+                    entry = self.env.set_faction_ai_rating(f, new_r)
+                    lbl = str(entry.get("label", f"Gen-{int(round(new_r))}"))
+                    self.slots[f]["ai_label"] = lbl
+                    self.slots[f]["username"] = f"AI [{lbl}]"
+
+    def end_turn_for_faction(self, faction: int):
+        if self.status != "playing" or self.env is None:
+            return
+        f = int(faction)
+        if f != self.current_turn_faction:
+            return
+
+        self.env.heal_all_unmoved_units(faction=f)
+        winner_f = self.env.get_match_winner()
+        if winner_f is not None:
+            self._finalize_match(winner_f)
+            return
+
+        order = self._get_turn_order()
+        self._step_to_next_faction(order)
+        winner_f = self.env.get_match_winner()
+        if winner_f is not None:
+            self._finalize_match(winner_f)
+            return
+
+        self._advance_ai_turns_if_needed()
+
+    def _finalize_match(self, winning_faction: int):
+        if self.status == "finished" or self.env is None:
+            return
+        self.status = "finished"
+        wf = int(winning_faction)
+        self.winner_faction = wf
+        w_slot = self.slots.get(wf, {})
+        self.winner_name = str(w_slot.get("username") or f"Faction {wf}")
+
+        m_obs, m_acts, m_weights = self.env.collect_match_training_samples(
+            winning_faction=wf,
+            min_efficiency=MIN_TRAINING_EFFICIENCY
+        )
+        saved_cnt = self.env.export_high_efficiency_telemetry(
+            winning_faction=wf,
+            min_efficiency=MIN_TRAINING_EFFICIENCY
+        )
+
+        human_count = self.human_count()
+        ai_ratings_list = [float(self.active_ai_ratings.get(f, self.slots[f]["ai_rating"])) for f in self.active_factions if self.slots[f]["kind"] == "ai"]
+        mean_ai_active = float(np.mean(ai_ratings_list)) if ai_ratings_list else None
+
+        for f in self.active_factions:
+            s = self.slots[f]
+            if s["kind"] == "human" and s["username"]:
+                uname = s["username"]
+                prof = UserProfileManager.get_or_create(uname)
+                won = (f == wf)
+
+                prof["matches_played"] = int(prof.get("matches_played", 0)) + 1
+                wins = list(prof.get("recent_wins", []))
+                wins.append(1.00 if won else 0.00)
+                if len(wins) > 20:
+                    wins.pop(0)
+                prof["recent_wins"] = wins
+
+                wr = float(np.mean(wins))
+                fast_wr = float(np.mean(wins[-5:]))
+                err_wr = wr - 0.50
+                d_wr = wr - float(prof.get("prev_winrate", 0.50))
+                prof["prev_winrate"] = round(wr, 4)
+
+                pvp_bonus = (4.50 if won else -3.50) if human_count > 1 else 0.00
+                delta_macro = round((8.00 * err_wr) + (32.00 * d_wr) + (12.00 * (fast_wr - 0.50)) + pvp_bonus, 2)
+                max_pool_r = max(100.00, PoolRegistry.get_max_rating() + 15.00)
+
+                old_base = float(prof.get("base_rating", 35.00))
+                ref_active = mean_ai_active if mean_ai_active is not None else old_base
+                blended = (0.55 * old_base) + (0.45 * ref_active) + delta_macro
+                new_base = round(max(10.00, min(max_pool_r, blended)), 2)
+
+                prof["base_rating"] = new_base
+                UserProfileManager.update_profile(uname, prof)
+
+                for af in self.active_factions:
+                    if self.slots[af]["kind"] == "ai":
+                        self.slots[af]["ai_rating"] = new_base
+
+        evo_author = w_slot.get("username") if w_slot.get("kind") == "human" else self.host
+        self.is_training_new_gen = True
+        self.last_evolution_report = {
+            "status": "training",
+            "winner": self.winner_name,
+            "winner_faction": wf,
+            "samples": int(saved_cnt)
+        }
+
+        def _bg_evolve(obs_c, acts_c, w_c, uname, w_name, w_fac):
+            try:
+                new_entry = OnlineEvolutionEngine.evolve_and_benchmark_from_match(obs_c, acts_c, w_c, username=uname)
+                self.last_evolution_report = {
+                    "status": "completed",
+                    "winner": w_name,
+                    "winner_faction": w_fac,
+                    "new_gen_label": str(new_entry["label"]),
+                    "new_gen_rating": float(new_entry["rating"]),
+                    "gauntlet_winrate": float(new_entry["w_gauntlet"]),
+                    "doctrine_alignment": float(new_entry.get("doctrine_alignment", 100.00)),
+                    "samples": int(saved_cnt)
+                }
+            finally:
+                self.is_training_new_gen = False
+
+        threading.Thread(
+            target=_bg_evolve,
+            args=(m_obs, m_acts, m_weights, evo_author, self.winner_name, wf),
+            daemon=True
+        ).start()
+
+    def serialize_summary(self) -> dict:
+        return {
+            "room_id": self.room_id,
+            "name": self.name,
+            "host": self.host,
+            "max_players": self.max_players,
+            "filled_slots": self.filled_count(),
+            "human_count": self.human_count(),
+            "ai_count": self.ai_count(),
+            "is_private": self.is_private,
+            "status": self.status,
+            "is_full": self.is_full(),
+            "slots": [
+                {
+                    "faction": f,
+                    "kind": self.slots[f]["kind"],
+                    "username": self.slots[f]["username"],
+                    "ai_rating": round(float(self.slots[f].get("ai_rating", 35.00)), 2),
+                    "ai_label": self.slots[f].get("ai_label", "")
+                }
+                for f in self.active_factions
+            ]
+        }
+
+    def serialize_for_user(self, username: str, lang: str = "en") -> dict:
+        norm_l = normalize_lang(lang)
+        user_prof = UserProfileManager.get_or_create(username, norm_l)
+        my_faction = self.get_user_faction(username)
+
+        base_payload = {
+            "screen": "game" if self.status in ("playing", "finished") else "room_lobby",
+            "username": username,
+            "is_registered": bool(user_prof.get("is_registered", False)),
+            "lang": norm_l,
+            "ui_text": get_ui_bundle(norm_l),
+            "matches_played": int(user_prof.get("matches_played", 0)),
+            "winrate": round(float(np.mean(user_prof.get("recent_wins", []))) * 100.00, 2) if user_prof.get("recent_wins") else 50.00,
+            "base_rating": round(float(user_prof.get("base_rating", 35.00)), 2),
+            "pool_size": len(PoolRegistry.get_all_generations()),
+            "pool_max_rating": round(float(PoolRegistry.get_max_rating()), 2),
+            "room": self.serialize_summary(),
+            "my_faction": my_faction,
+            "is_host": (username == self.host),
+            "can_start": (username == self.host and self.is_full() and self.status in ("waiting", "finished")),
+            "is_training_new_gen": bool(self.is_training_new_gen),
+            "last_evolution_report": self.last_evolution_report,
+            "config": {
+                "unit_stats": UNIT_STATS,
+                "struct_stats": STRUCT_STATS,
+                "disband_ratio": DISBAND_REFUND_RATIO,
+                "demolish_ratio": DEMOLISH_REFUND_RATIO,
+                "min_training_eff": MIN_TRAINING_EFFICIENCY
+            }
+        }
+
+        if self.env is None:
+            return clean_for_json(base_payload)
+
+        env = self.env
+        env.set_language(norm_l)
+
+        factions_data = {}
+        for f in self.active_factions:
+            inc, upk, net, tiles, army = env.get_faction_economy_stats(f)
+            tax = round(max(0, army - SUPPLY_LIMIT) * SUPPLY_TAX_PER_UNIT, 2)
+            slot_info = self.slots[f]
+            factions_data[str(f)] = {
+                "faction": f,
+                "name": get_faction_display_name(f, norm_l),
+                "color": FACTION_META[f]["color"],
+                "kind": slot_info["kind"],
+                "controller": slot_info["username"] or "Empty",
+                "alive": bool(env.is_faction_alive(f)),
+                "gold": round(float(env.get_faction_gold(f)), 2),
+                "inc": float(inc),
+                "upk": float(upk),
+                "tax": float(tax),
+                "net": float(net),
+                "tiles": int(tiles),
+                "army": int(army),
+                "castle_hp": round(float(env.get_castle_hp(f)), 2),
+                "castle_pos": list(env.castle_positions[f])
+            }
+
+        is_my_turn = (self.status == "playing" and my_faction is not None and self.current_turn_faction == my_faction)
+        sel_pos = self.selected_by_user.get(username)
 
         valid_moves = []
         valid_attacks = []
         inspector = {
-            "title": get_text(self.lang, "nothing_selected"),
-            "lines": [get_text(self.lang, "click_prompt")],
+            "title": get_text(norm_l, "nothing_selected"),
+            "lines": [get_text(norm_l, "click_prompt")],
             "can_heal": False,
             "can_harvest": False,
             "can_build_tower": False,
@@ -156,75 +714,93 @@ class GameSession:
             "can_spawn_archer": False
         }
 
-        if self.selected_pos is not None:
-            sr, sc = int(self.selected_pos[0]), int(self.selected_pos[1])
-            base_v = float(self.env.tile_yields[sr, sc])
-            eff_v = float(self.env.get_effective_tile_yield(sr, sc))
-            owner_key = {0: "owner_neutral", 1: "owner_ai", 2: "owner_player"}[int(self.env.territory[sr, sc])]
-            owner_str = get_text(self.lang, owner_key)
-            lines = []
-            if self.env.is_tile_built_up(sr, sc):
-                lines.append(get_text(self.lang, "land_built", base=base_v, owner=owner_str))
+        if sel_pos is not None:
+            sr, sc = int(sel_pos[0]), int(sel_pos[1])
+            base_v = float(env.tile_yields[sr, sc])
+            eff_v = float(env.get_effective_tile_yield(sr, sc))
+            terr_owner = int(env.territory[sr, sc])
+            if terr_owner == 0:
+                owner_str = get_text(norm_l, "owner_neutral")
+            elif terr_owner == my_faction:
+                owner_str = f"{get_faction_display_name(terr_owner, norm_l)} (You)"
             else:
-                lines.append(get_text(self.lang, "land_free", eff=eff_v, owner=owner_str))
+                ctrl_name = self.slots.get(terr_owner, {}).get("username") or get_faction_display_name(terr_owner, norm_l)
+                owner_str = f"{get_faction_display_name(terr_owner, norm_l)} [{ctrl_name}]"
 
-            if (sr, sc) in self.env.units:
-                u = self.env.units[(sr, sc)]
+            lines = []
+            if env.is_tile_built_up(sr, sc):
+                lines.append(get_text(norm_l, "land_built", base=base_v, owner=owner_str))
+            else:
+                lines.append(get_text(norm_l, "land_free", eff=eff_v, owner=owner_str))
+
+            if (sr, sc) in env.units:
+                u = env.units[(sr, sc)]
+                uf = int(u['faction'])
                 st = UNIT_STATS[u['type']]
-                u_name = get_unit_name(u['type'], self.lang)
-                f_str = get_text(self.lang, "owner_player") if int(u['faction']) == 2 else get_text(self.lang, "owner_ai")
-                r_str = get_text(self.lang, "status_ready") if bool(u['ready']) else get_text(self.lang, "status_moved")
-                lines.append(get_text(self.lang, "unit_header", name=u_name, faction=f_str, status=r_str))
-                lines.append(get_text(self.lang, "hp_line", hp=u['hp'], max_hp=u['max_hp'], pct=(u['hp'] / u['max_hp']) * 100.00))
-                lines.append(get_text(self.lang, "stats_line", move=st['move_range'], atk=st['atk_range'], dmg=st['dmg']))
-                lines.append(get_text(self.lang, "upkeep_line", upk=st['upkeep'], eff=u['efficiency']))
-                if int(u['faction']) == 2:
+                u_name = get_unit_name(u['type'], norm_l)
+                f_str = f"{get_faction_display_name(uf, norm_l)} [{self.slots.get(uf, {}).get('username', '')}]"
+                r_str = get_text(norm_l, "status_ready") if bool(u['ready']) else get_text(norm_l, "status_moved")
+                lines.append(get_text(norm_l, "unit_header", name=u_name, faction=f_str, status=r_str))
+                lines.append(get_text(norm_l, "hp_line", hp=u['hp'], max_hp=u['max_hp'], pct=(u['hp'] / u['max_hp']) * 100.00))
+                lines.append(get_text(norm_l, "stats_line", move=st['move_range'], atk=st['atk_range'], dmg=st['dmg']))
+                lines.append(get_text(norm_l, "upkeep_line", upk=st['upkeep'], eff=u['efficiency']))
+
+                if is_my_turn and uf == my_faction:
                     inspector["can_disband"] = True
                     if bool(u['ready']):
-                        valid_moves = [[int(p[0]), int(p[1])] for p in self.env.get_valid_moves_for_unit((sr, sc))]
-                        valid_attacks = [[int(p[0]), int(p[1])] for p in self.env.get_valid_attack_targets((sr, sc))]
+                        valid_moves = [[int(p[0]), int(p[1])] for p in env.get_valid_moves_for_unit((sr, sc))]
+                        valid_attacks = [[int(p[0]), int(p[1])] for p in env.get_valid_attack_targets((sr, sc))]
                         inspector["can_heal"] = True
                         if u['type'] == 'worker':
+                            my_gold = env.get_faction_gold(my_faction)
                             inspector["can_harvest"] = bool(eff_v > 0.00)
                             inspector["can_build_tower"] = bool(
-                                float(self.env.p2_gold) >= STRUCT_STATS[1]['cost']
-                                and self.env._find_adjacent_tower_site((sr, sc), 2) is not None
+                                my_gold >= STRUCT_STATS[1]['cost']
+                                and env._find_adjacent_tower_site((sr, sc), my_faction) is not None
                             )
                             inspector["can_build_barracks"] = bool(
-                                float(self.env.p2_gold) >= STRUCT_STATS[2]['cost']
-                                and self.env._find_barracks_build_site((sr, sc), 2, enforce_ai_distance=False) is not None
+                                my_gold >= STRUCT_STATS[2]['cost']
+                                and env._find_barracks_build_site((sr, sc), my_faction, enforce_ai_distance=False) is not None
                             )
                             inspector["can_demolish"] = bool(
-                                self.env._find_demolishable_structure_site((sr, sc), 2) is not None
+                                env._find_demolishable_structure_site((sr, sc), my_faction) is not None
                             )
-            elif int(self.env.struct_owner[sr, sc]) == 2 and int(self.env.struct_type[sr, sc]) == 1 and bool(self.env.tower_ready[sr, sc]):
-                valid_attacks = [[int(p[0]), int(p[1])] for p in self.env.get_valid_attack_targets((sr, sc), faction=2, atk_range=2)]
+            elif is_my_turn and int(env.struct_owner[sr, sc]) == my_faction and int(env.struct_type[sr, sc]) == 1 and bool(env.tower_ready[sr, sc]):
+                valid_attacks = [[int(p[0]), int(p[1])] for p in env.get_valid_attack_targets((sr, sc), faction=my_faction, atk_range=2)]
 
-            if (sr, sc) == self.env.p2_castle_pos:
-                lines.append(get_text(self.lang, "your_castle", hp=self.env.p2_castle_hp, max_hp=CASTLE_MAX_HP))
-                if (sr, sc) not in self.env.units:
-                    inspector["can_spawn_worker"] = bool(float(self.env.p2_gold) >= UNIT_STATS['worker']['cost'])
-                    inspector["can_spawn_warrior"] = bool(float(self.env.p2_gold) >= UNIT_STATS['warrior']['cost'])
-                    inspector["can_spawn_archer"] = bool(float(self.env.p2_gold) >= UNIT_STATS['archer']['cost'])
-                else:
-                    lines.append(get_text(self.lang, "castle_occupied"))
-            elif (sr, sc) == self.env.p1_castle_pos:
-                lines.append(get_text(self.lang, "ai_castle", hp=self.env.p1_castle_hp, max_hp=CASTLE_MAX_HP))
-            elif int(self.env.struct_type[sr, sc]) != 0:
-                st_t = int(self.env.struct_type[sr, sc])
-                st_own = int(self.env.struct_owner[sr, sc])
-                st_info = STRUCT_STATS[st_t]
-                st_name = get_struct_name(st_t, self.lang)
-                lines.append(get_text(self.lang, "struct_line", name=st_name, hp=float(self.env.struct_hp[sr, sc]), max_hp=st_info['max_hp']))
-                if st_t == 2 and st_own == 2 and (sr, sc) not in self.env.units:
-                    inspector["can_spawn_worker"] = bool(float(self.env.p2_gold) >= UNIT_STATS['worker']['cost'])
-                    inspector["can_spawn_warrior"] = bool(float(self.env.p2_gold) >= UNIT_STATS['warrior']['cost'])
-                    inspector["can_spawn_archer"] = bool(float(self.env.p2_gold) >= UNIT_STATS['archer']['cost'])
+            for cf in self.active_factions:
+                if (sr, sc) == env.castle_positions[cf] and env.is_faction_alive(cf):
+                    c_hp = env.get_castle_hp(cf)
+                    if cf == my_faction:
+                        lines.append(get_text(norm_l, "your_castle", hp=c_hp, max_hp=CASTLE_MAX_HP))
+                        if is_my_turn:
+                            if (sr, sc) not in env.units:
+                                my_gold = env.get_faction_gold(my_faction)
+                                inspector["can_spawn_worker"] = bool(my_gold >= UNIT_STATS['worker']['cost'])
+                                inspector["can_spawn_warrior"] = bool(my_gold >= UNIT_STATS['warrior']['cost'])
+                                inspector["can_spawn_archer"] = bool(my_gold >= UNIT_STATS['archer']['cost'])
+                            else:
+                                lines.append(get_text(norm_l, "castle_occupied"))
+                    else:
+                        lines.append(f"{get_faction_display_name(cf, norm_l)} Castle ({c_hp:.2f} / {CASTLE_MAX_HP:.2f} HP)")
+                    break
+            else:
+                if int(env.struct_type[sr, sc]) != 0:
+                    st_t = int(env.struct_type[sr, sc])
+                    st_own = int(env.struct_owner[sr, sc])
+                    st_info = STRUCT_STATS[st_t]
+                    st_name = get_struct_name(st_t, norm_l)
+                    lines.append(get_text(norm_l, "struct_line", name=st_name, hp=float(env.struct_hp[sr, sc]), max_hp=st_info['max_hp']))
+                    if is_my_turn and st_t == 2 and st_own == my_faction and (sr, sc) not in env.units:
+                        my_gold = env.get_faction_gold(my_faction)
+                        inspector["can_spawn_worker"] = bool(my_gold >= UNIT_STATS['worker']['cost'])
+                        inspector["can_spawn_warrior"] = bool(my_gold >= UNIT_STATS['warrior']['cost'])
+                        inspector["can_spawn_archer"] = bool(my_gold >= UNIT_STATS['archer']['cost'])
 
             inspector["lines"] = lines
 
         units_list = []
-        for (ur, uc), u in self.env.units.items():
+        for (ur, uc), u in env.units.items():
             units_list.append({
                 "r": int(ur),
                 "c": int(uc),
@@ -237,66 +813,160 @@ class GameSession:
             })
 
         structs_list = []
-        for r in range(self.env.grid_size):
-            for c in range(self.env.grid_size):
-                if int(self.env.struct_type[r, c]) != 0:
+        for r in range(env.grid_size):
+            for c in range(env.grid_size):
+                if int(env.struct_type[r, c]) != 0:
                     structs_list.append({
                         "r": int(r),
                         "c": int(c),
-                        "type": int(self.env.struct_type[r, c]),
-                        "owner": int(self.env.struct_owner[r, c]),
-                        "hp": round(float(self.env.struct_hp[r, c]), 2),
-                        "ready": bool(self.env.tower_ready[r, c])
+                        "type": int(env.struct_type[r, c]),
+                        "owner": int(env.struct_owner[r, c]),
+                        "hp": round(float(env.struct_hp[r, c]), 2),
+                        "ready": bool(env.tower_ready[r, c])
                     })
 
-        wins = self.profile.get("recent_wins", [])
-        wr = round(float(np.mean(wins)) * 100.00, 2) if wins else 50.00
+        ai_slots = [self.slots[f] for f in self.active_factions if self.slots[f]["kind"] == "ai"]
+        if ai_slots:
+            primary_ai_lbl = ", ".join(s["ai_label"] for s in ai_slots)
+            primary_ai_r = round(float(np.mean([self.active_ai_ratings.get(s["faction"], s["ai_rating"]) for s in ai_slots])), 2)
+        else:
+            primary_ai_lbl = "PvP Multiplayer"
+            primary_ai_r = round(float(user_prof.get("base_rating", 35.00)), 2)
 
-        raw_payload = {
-            "username": str(self.username),
-            "lang": str(self.lang),
-            "ui_text": get_ui_bundle(self.lang),
-            "matches_played": int(self.profile.get("matches_played", 0)),
-            "turn": int(self.env.turn_count),
+        turn_slot = self.slots.get(self.current_turn_faction, {})
+        turn_owner_name = turn_slot.get("username") or f"Faction {self.current_turn_faction}"
+
+        p2_compat = factions_data.get(str(my_faction or 2), factions_data.get("2", factions_data["1"]))
+        p1_compat = factions_data.get("1", p2_compat)
+
+        base_payload.update({
+            "turn": int(env.turn_count),
             "max_turns": int(MAX_STEPS),
-            "winrate": float(wr),
-            "base_rating": round(float(self.base_rating), 2),
-            "active_rating": round(float(self.env.active_gen_idx), 2),
-            "active_gen_label": str(self.env.active_gen_label),
-            "active_gen_origin": str(self.env.active_gen_origin),
-            "pool_size": len(PoolRegistry.get_all_generations()),
-            "pool_max_rating": round(float(PoolRegistry.get_max_rating()), 2),
-            "p2": {"gold": float(self.env.p2_gold), "inc": float(inc2), "upk": float(upk2), "tax": float(tax2), "net": float(net2), "tiles": int(t2), "army": int(u2), "castle_hp": float(self.env.p2_castle_hp)},
-            "p1": {"gold": float(self.env.p1_gold), "inc": float(inc1), "upk": float(upk1), "tax": float(tax1), "net": float(net1), "tiles": int(t1), "army": int(u1), "castle_hp": float(self.env.p1_castle_hp)},
-            "terrain": self.env.terrain.tolist(),
-            "territory": self.env.territory.tolist(),
-            "eff_yields": np.round(self.env.get_effective_yield_map(), 2).tolist(),
+            "current_turn_faction": int(self.current_turn_faction),
+            "current_turn_user": str(turn_owner_name),
+            "is_my_turn": bool(is_my_turn),
+            "active_rating": float(primary_ai_r),
+            "active_gen_label": str(primary_ai_lbl),
+            "active_gen_origin": "multiplayer_room",
+            "factions": factions_data,
+            "p2": p2_compat,
+            "p1": p1_compat,
+            "terrain": env.terrain.tolist(),
+            "territory": env.territory.tolist(),
+            "eff_yields": np.round(env.get_effective_yield_map(), 2).tolist(),
             "units": units_list,
             "structs": structs_list,
-            "selected_pos": [int(self.selected_pos[0]), int(self.selected_pos[1])] if self.selected_pos else None,
+            "selected_pos": [int(sel_pos[0]), int(sel_pos[1])] if sel_pos else None,
             "valid_moves": valid_moves,
             "valid_attacks": valid_attacks,
-            "ai_traces": self.env.last_ai_turn_traces,
-            "event_log": self.env.turn_event_log,
+            "ai_traces": env.last_ai_turn_traces,
+            "event_log": env.turn_event_log,
             "inspector": inspector,
-            "stats": self.env.get_efficiency_statistics(),
-            "is_training_new_gen": bool(self.is_training_new_gen),
-            "last_evolution_report": self.last_evolution_report,
-            "config": {
-                "unit_stats": UNIT_STATS,
-                "struct_stats": STRUCT_STATS,
-                "disband_ratio": DISBAND_REFUND_RATIO,
-                "demolish_ratio": DEMOLISH_REFUND_RATIO,
-                "min_training_eff": MIN_TRAINING_EFFICIENCY
-            }
-        }
-        return clean_for_json(raw_payload)
+            "stats": env.get_efficiency_statistics(),
+            "match_finished": (self.status == "finished"),
+            "winner_faction": self.winner_faction,
+            "winner_name": self.winner_name
+        })
+        return clean_for_json(base_payload)
 
-def get_session(username: str) -> GameSession:
-    uname = username.strip() or "Guest1"
-    if uname not in ACTIVE_SESSIONS:
-        ACTIVE_SESSIONS[uname] = GameSession(uname)
-    return ACTIVE_SESSIONS[uname]
+class RoomManager:
+    @staticmethod
+    def list_rooms() -> list:
+        with ROOMS_LOCK:
+            return [r.serialize_summary() for r in sorted(ROOMS.values(), key=lambda x: x.created_at, reverse=True)]
+
+    @staticmethod
+    def get_user_room(username: str) -> Optional[GameRoom]:
+        with ROOMS_LOCK:
+            rid = USER_ACTIVE_ROOM.get(username)
+            if rid and rid in ROOMS:
+                room = ROOMS[rid]
+                if room.get_user_faction(username) is not None or room.host == username:
+                    return room
+                USER_ACTIVE_ROOM.pop(username, None)
+            return None
+
+    @staticmethod
+    def leave_current_room(username: str):
+        with ROOMS_LOCK:
+            room = RoomManager.get_user_room(username)
+            USER_ACTIVE_ROOM.pop(username, None)
+            if room is None:
+                return
+            uf = room.get_user_faction(username)
+            if room.status == "waiting":
+                if uf is not None:
+                    room.clear_slot(uf)
+                remaining_humans = [room.slots[f]["username"] for f in room.active_factions if room.slots[f]["kind"] == "human" and room.slots[f]["username"]]
+                if not remaining_humans:
+                    ROOMS.pop(room.room_id, None)
+                elif room.host == username:
+                    room.host = remaining_humans[0]
+            elif room.status == "playing" and uf is not None and room.env is not None:
+                u_prof = UserProfileManager.get_or_create(username)
+                r_val = float(u_prof.get("base_rating", 35.00))
+                entry = room.env.set_faction_ai_rating(uf, r_val)
+                lbl = str(entry.get("label", f"Gen-{int(round(r_val))}"))
+                room.slots[uf] = {
+                    "faction": uf,
+                    "kind": "ai",
+                    "username": f"AI [{lbl}]",
+                    "ai_rating": r_val,
+                    "ai_label": lbl
+                }
+                room.active_ai_ratings[uf] = r_val
+                if room.human_count() == 0:
+                    ROOMS.pop(room.room_id, None)
+                elif room.current_turn_faction == uf:
+                    room._advance_ai_turns_if_needed()
+            elif room.status == "finished":
+                if uf is not None:
+                    room.clear_slot(uf)
+                if room.human_count() == 0:
+                    ROOMS.pop(room.room_id, None)
+
+    @staticmethod
+    def create_room(host: str, room_name: str, max_players: int, is_private: bool, password: str, fill_ai: bool = False) -> GameRoom:
+        with ROOMS_LOCK:
+            RoomManager.leave_current_room(host)
+            rid = uuid.uuid4().hex[:6].upper()
+            while rid in ROOMS:
+                rid = uuid.uuid4().hex[:6].upper()
+
+            room = GameRoom(
+                room_id=rid,
+                name=room_name or f"{host}'s Room",
+                host=host,
+                max_players=max_players,
+                is_private=is_private,
+                password=password
+            )
+            if fill_ai:
+                for f in room.active_factions:
+                    if room.slots[f]["kind"] == "empty":
+                        room.add_ai_to_slot(f)
+
+            ROOMS[rid] = room
+            USER_ACTIVE_ROOM[host] = rid
+            return room
+
+class AuthRequest(BaseModel):
+    mode: str
+    username: Optional[str] = None
+    password: Optional[str] = None
+    lang: Optional[str] = "en"
+
+class RoomActionRequest(BaseModel):
+    username: str
+    action: str
+    room_id: Optional[str] = None
+    room_name: Optional[str] = None
+    max_players: Optional[int] = 2
+    is_private: Optional[bool] = False
+    password: Optional[str] = ""
+    slot_faction: Optional[int] = None
+    ai_rating: Optional[float] = None
+    fill_ai: Optional[bool] = False
 
 class ActionRequest(BaseModel):
     username: str
@@ -305,212 +975,296 @@ class ActionRequest(BaseModel):
     c: Optional[int] = None
     param: Optional[str] = None
 
+def _build_lobby_payload(username: str, lang: str = "en") -> dict:
+    norm_l = normalize_lang(lang)
+    prof = UserProfileManager.get_or_create(username, norm_l)
+    room = RoomManager.get_user_room(username)
+    if room is not None:
+        return room.serialize_for_user(username, norm_l)
+
+    wins = prof.get("recent_wins", [])
+    wr = round(float(np.mean(wins)) * 100.00, 2) if wins else 50.00
+    return clean_for_json({
+        "screen": "lobby",
+        "username": str(prof["username"]),
+        "is_registered": bool(prof.get("is_registered", False)),
+        "lang": norm_l,
+        "ui_text": get_ui_bundle(norm_l),
+        "matches_played": int(prof.get("matches_played", 0)),
+        "winrate": float(wr),
+        "base_rating": round(float(prof.get("base_rating", 35.00)), 2),
+        "pool_size": len(PoolRegistry.get_all_generations()),
+        "pool_max_rating": round(float(PoolRegistry.get_max_rating()), 2),
+        "rooms": RoomManager.list_rooms()
+    })
+
 @app.get("/api/init_user")
 def api_init_user(request: Request):
     client_ip = request.client.host if request.client else "127.0.0.1"
-    guest_name = UserProfileManager.get_guest_name_for_ip(client_ip)
-    session = get_session(guest_name)
-    return {"username": guest_name, "lang": session.lang}
+    db = UserProfileManager.load_all()
+    ip_map = db.get("__ip_map__", {})
+    suggested_guest = ip_map.get(client_ip, "")
+    lang = "en"
+    if suggested_guest and suggested_guest in db:
+        lang = normalize_lang(db[suggested_guest].get("lang", "en"))
+    return {
+        "suggested_guest": suggested_guest,
+        "lang": lang,
+        "ui_text": get_ui_bundle(lang)
+    }
+
+@app.post("/api/auth")
+def api_auth(req: AuthRequest, request: Request):
+    norm_l = normalize_lang(req.lang or "en")
+    if req.mode == "guest":
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        prof = UserProfileManager.create_guest_for_ip(client_ip, norm_l)
+        return {"ok": True, "state": _build_lobby_payload(prof["username"], prof.get("lang", norm_l))}
+
+    ok, msg, prof = UserProfileManager.authenticate_or_register(
+        username=req.username or "",
+        password=req.password or "",
+        mode=req.mode,
+        lang=norm_l
+    )
+    if not ok:
+        return {"ok": False, "error": msg}
+    return {"ok": True, "state": _build_lobby_payload(prof["username"], prof.get("lang", norm_l))}
+
+@app.post("/api/rooms")
+def api_rooms_action(req: RoomActionRequest):
+    uname = str(req.username).strip() or "Guest1"
+    prof = UserProfileManager.get_or_create(uname)
+    lang = normalize_lang(prof.get("lang", "en"))
+    act = req.action
+
+    with ROOMS_LOCK:
+        if act == "list":
+            return {"ok": True, "state": _build_lobby_payload(uname, lang)}
+
+        if act == "create":
+            room = RoomManager.create_room(
+                host=uname,
+                room_name=req.room_name or f"{uname}'s Battle",
+                max_players=req.max_players or 2,
+                is_private=bool(req.is_private),
+                password=req.password or "",
+                fill_ai=bool(req.fill_ai)
+            )
+            return {"ok": True, "state": room.serialize_for_user(uname, lang)}
+
+        if act == "quick_bot_match":
+            room = RoomManager.create_room(
+                host=uname,
+                room_name=f"{uname} vs AI",
+                max_players=req.max_players or 2,
+                is_private=False,
+                password="",
+                fill_ai=True
+            )
+            room.start_match()
+            return {"ok": True, "state": room.serialize_for_user(uname, lang)}
+
+        if act == "join":
+            rid = str(req.room_id or "").strip().upper()
+            room = ROOMS.get(rid)
+            if room is None:
+                err = "Кімнату не знайдено." if lang == "uk" else "Room not found."
+                return {"ok": False, "error": err, "state": _build_lobby_payload(uname, lang)}
+
+            if room.get_user_faction(uname) is None:
+                if not room.verify_password(req.password or ""):
+                    err = "Невірний пароль кімнати." if lang == "uk" else "Invalid room password."
+                    return {"ok": False, "error": err, "state": _build_lobby_payload(uname, lang)}
+                ok, _ = room.add_human_player(uname, preferred_faction=req.slot_faction)
+                if not ok:
+                    err = "Немає вільних слотів у кімнаті." if lang == "uk" else "No empty human slots available in this room."
+                    return {"ok": False, "error": err, "state": _build_lobby_payload(uname, lang)}
+
+            RoomManager.leave_current_room(uname)
+            room.add_human_player(uname, preferred_faction=req.slot_faction)
+            USER_ACTIVE_ROOM[uname] = room.room_id
+            return {"ok": True, "state": room.serialize_for_user(uname, lang)}
+
+        if act == "leave":
+            RoomManager.leave_current_room(uname)
+            return {"ok": True, "state": _build_lobby_payload(uname, lang)}
+
+        room = RoomManager.get_user_room(uname)
+        if room is None:
+            return {"ok": False, "error": "Not in a room.", "state": _build_lobby_payload(uname, lang)}
+
+        if act == "add_ai" and room.host == uname:
+            if room.status == "finished":
+                room.status = "waiting"
+            room.add_ai_to_slot(slot_faction=req.slot_faction, ai_rating=req.ai_rating)
+            return {"ok": True, "state": room.serialize_for_user(uname, lang)}
+
+        if act == "kick_slot" and room.host == uname and req.slot_faction is not None:
+            if room.status == "finished":
+                room.status = "waiting"
+            sf = int(req.slot_faction)
+            if sf in room.active_factions and room.slots[sf]["username"] != uname:
+                kicked_user = room.clear_slot(sf)
+                if kicked_user and USER_ACTIVE_ROOM.get(kicked_user) == room.room_id:
+                    USER_ACTIVE_ROOM.pop(kicked_user, None)
+            return {"ok": True, "state": room.serialize_for_user(uname, lang)}
+
+        if act == "switch_slot" and req.slot_faction is not None and room.status == "waiting":
+            sf = int(req.slot_faction)
+            curr_f = room.get_user_faction(uname)
+            if sf in room.active_factions and room.slots[sf]["kind"] == "empty" and curr_f is not None:
+                room.clear_slot(curr_f)
+                room.add_human_player(uname, preferred_faction=sf)
+            return {"ok": True, "state": room.serialize_for_user(uname, lang)}
+
+        if act == "start" and room.host == uname:
+            if not room.is_full():
+                err = "Заповніть усі слоти гравцями або ШІ перед стартом!" if lang == "uk" else "Fill all slots with players or AI before starting!"
+                return {"ok": False, "error": err, "state": room.serialize_for_user(uname, lang)}
+            room.start_match()
+            return {"ok": True, "state": room.serialize_for_user(uname, lang)}
+
+        if act == "rematch" and room.host == uname and room.status == "finished":
+            if room.is_full():
+                room.start_match()
+            else:
+                room.status = "waiting"
+            return {"ok": True, "state": room.serialize_for_user(uname, lang)}
+
+        return {"ok": True, "state": room.serialize_for_user(uname, lang)}
 
 @app.post("/api/state")
 def api_get_state(req: ActionRequest):
-    session = get_session(req.username)
+    uname = str(req.username).strip() or "Guest1"
     if req.param in ("en", "uk", "ua"):
-        session.set_language(req.param)
-    return session.serialize_state()
+        prof = UserProfileManager.set_user_lang(uname, req.param)
+    else:
+        prof = UserProfileManager.get_or_create(uname)
+    lang = normalize_lang(prof.get("lang", "en"))
+
+    room = RoomManager.get_user_room(uname)
+    if room is not None:
+        return room.serialize_for_user(uname, lang)
+    return _build_lobby_payload(uname, lang)
 
 @app.post("/api/action")
 def api_perform_action(req: ActionRequest):
-    session = get_session(req.username)
-    env = session.env
+    uname = str(req.username).strip() or "Guest1"
     atype = req.action_type
 
     if atype == "set_lang" and req.param:
-        session.set_language(req.param)
-        return session.serialize_state()
+        prof = UserProfileManager.set_user_lang(uname, req.param)
+        lang = normalize_lang(prof.get("lang", "en"))
+        room = RoomManager.get_user_room(uname)
+        if room is not None:
+            return room.serialize_for_user(uname, lang)
+        return _build_lobby_payload(uname, lang)
 
-    if atype == "click_tile" and req.r is not None and req.c is not None:
-        clicked = (int(req.r), int(req.c))
-        if session.selected_pos is not None:
-            valid_m = []
-            valid_a = []
-            sr, sc = int(session.selected_pos[0]), int(session.selected_pos[1])
-            if (sr, sc) in env.units and env.units[(sr, sc)]['faction'] == 2 and env.units[(sr, sc)]['ready']:
-                valid_m = env.get_valid_moves_for_unit((sr, sc))
-                valid_a = env.get_valid_attack_targets((sr, sc))
-            elif int(env.struct_owner[sr, sc]) == 2 and int(env.struct_type[sr, sc]) == 1 and bool(env.tower_ready[sr, sc]):
-                valid_a = env.get_valid_attack_targets((sr, sc), faction=2, atk_range=2)
+    prof = UserProfileManager.get_or_create(uname)
+    lang = normalize_lang(prof.get("lang", "en"))
 
-            if clicked in valid_m:
-                dr, dc = clicked[0] - sr, clicked[1] - sc
-                if (-dr, -dc) in RELATIVE_OFFSETS:
-                    env.record_entity_decision('unit', (sr, sc), 2, RELATIVE_OFFSETS.index((-dr, -dc)))
-                u_type = env.units[(sr, sc)]['type']
-                if env.execute_unit_move((sr, sc), clicked):
-                    env.add_localized_event("player_move", u_type=u_type, r=clicked[0], c=clicked[1])
-                    session.selected_pos = clicked
-                return session.serialize_state()
+    with ROOMS_LOCK:
+        room = RoomManager.get_user_room(uname)
+        if room is None or room.env is None:
+            return _build_lobby_payload(uname, lang)
 
-            if clicked in valid_a:
-                is_tower = ((sr, sc) not in env.units and int(env.struct_owner[sr, sc]) == 2 and int(env.struct_type[sr, sc]) == 1)
-                dr, dc = clicked[0] - sr, clicked[1] - sc
-                if (-dr, -dc) in RELATIVE_OFFSETS:
-                    env.record_entity_decision('tower' if is_tower else 'unit', (sr, sc), 2, 12 + RELATIVE_OFFSETS.index((-dr, -dc)))
-                dmg = env.execute_attack_on_target((sr, sc), clicked, is_tower=is_tower)
-                if dmg > 0.00:
-                    env.add_localized_event("player_attack", dmg=dmg, r=clicked[0], c=clicked[1])
-                    _check_and_handle_match_end(session)
-                return session.serialize_state()
+        env = room.env
+        my_f = room.get_user_faction(uname)
+        if my_f is None:
+            return room.serialize_for_user(uname, lang)
 
-        session.selected_pos = clicked
+        is_my_turn = (room.status == "playing" and room.current_turn_faction == my_f)
+        sel_pos = room.selected_by_user.get(uname)
 
-    elif atype == "heal" and session.selected_pos in env.units:
-        if env.units[session.selected_pos]['faction'] == 2:
-            env.record_entity_decision('unit', session.selected_pos, 2, 24)
-            gained = env.heal_unit_percentage(session.selected_pos)
-            env.add_localized_event("player_heal", gained=gained)
+        if atype == "click_tile" and req.r is not None and req.c is not None:
+            clicked = (int(req.r), int(req.c))
+            if is_my_turn and sel_pos is not None:
+                valid_m = []
+                valid_a = []
+                sr, sc = int(sel_pos[0]), int(sel_pos[1])
+                if (sr, sc) in env.units and env.units[(sr, sc)]['faction'] == my_f and env.units[(sr, sc)]['ready']:
+                    valid_m = env.get_valid_moves_for_unit((sr, sc))
+                    valid_a = env.get_valid_attack_targets((sr, sc))
+                elif int(env.struct_owner[sr, sc]) == my_f and int(env.struct_type[sr, sc]) == 1 and bool(env.tower_ready[sr, sc]):
+                    valid_a = env.get_valid_attack_targets((sr, sc), faction=my_f, atk_range=2)
 
-    elif atype == "harvest" and session.selected_pos in env.units:
-        if env.units[session.selected_pos]['faction'] == 2:
-            env.record_entity_decision('unit', session.selected_pos, 2, 25)
-            bonus = env.execute_worker_harvest(session.selected_pos)
-            if bonus > 0.00:
-                env.add_localized_event("player_harvest", bonus=bonus)
+                if clicked in valid_m:
+                    dr, dc = clicked[0] - sr, clicked[1] - sc
+                    if (dr, dc) in RELATIVE_OFFSETS:
+                        env.record_entity_decision('unit', (sr, sc), my_f, RELATIVE_OFFSETS.index((dr, dc)))
+                    u_type = env.units[(sr, sc)]['type']
+                    if env.execute_unit_move((sr, sc), clicked):
+                        env.add_localized_event("player_move", u_type=u_type, r=clicked[0], c=clicked[1])
+                        room.selected_by_user[uname] = clicked
+                    return room.serialize_for_user(uname, lang)
 
-    elif atype == "build" and session.selected_pos in env.units:
-        if env.units[session.selected_pos]['faction'] == 2:
-            b_type = 1 if req.param == "tower" else 2
-            env.record_entity_decision('unit', session.selected_pos, 2, 26 if b_type == 1 else 27)
-            if env.execute_worker_build(session.selected_pos, build_type=b_type):
-                env.add_localized_event("player_build", st_type=b_type)
+                if clicked in valid_a:
+                    is_tower = ((sr, sc) not in env.units and int(env.struct_owner[sr, sc]) == my_f and int(env.struct_type[sr, sc]) == 1)
+                    dr, dc = clicked[0] - sr, clicked[1] - sc
+                    if (dr, dc) in RELATIVE_OFFSETS:
+                        env.record_entity_decision('tower' if is_tower else 'unit', (sr, sc), my_f, 12 + RELATIVE_OFFSETS.index((dr, dc)))
+                    dmg = env.execute_attack_on_target((sr, sc), clicked, is_tower=is_tower)
+                    if dmg > 0.00:
+                        env.add_localized_event("player_attack", dmg=dmg, r=clicked[0], c=clicked[1])
+                        winner_f = env.get_match_winner()
+                        if winner_f is not None:
+                            room._finalize_match(winner_f)
+                    return room.serialize_for_user(uname, lang)
 
-    elif atype == "disband" and session.selected_pos in env.units:
-        if env.units[session.selected_pos]['faction'] == 2:
-            u_type = env.units[session.selected_pos]['type']
-            env.record_entity_decision('unit', session.selected_pos, 2, 28)
-            refund = env.execute_unit_disband(session.selected_pos)
-            if refund > 0.00:
-                env.add_localized_event("player_disband", u_type=u_type, refund=refund)
-                session.selected_pos = None
+            room.selected_by_user[uname] = clicked
+            return room.serialize_for_user(uname, lang)
 
-    elif atype == "demolish" and session.selected_pos in env.units:
-        if env.units[session.selected_pos]['faction'] == 2:
-            env.record_entity_decision('unit', session.selected_pos, 2, 29)
-            refund, st_t = env.execute_worker_demolish(session.selected_pos)
-            if refund > 0.00:
-                env.add_localized_event("player_demolish", st_type=st_t, refund=refund)
+        if not is_my_turn:
+            return room.serialize_for_user(uname, lang)
 
-    elif atype == "spawn" and session.selected_pos is not None:
-        u_type = req.param or "warrior"
-        act_map = {'worker': 27, 'warrior': 28, 'archer': 29}
-        env.record_entity_decision('spawn', session.selected_pos, 2, act_map.get(u_type, 28))
-        if env.execute_structure_spawn(session.selected_pos, faction=2, unit_type=u_type):
-            env.add_localized_event("player_spawn", u_type=u_type)
+        if atype == "heal" and sel_pos in env.units:
+            if env.units[sel_pos]['faction'] == my_f:
+                env.record_entity_decision('unit', sel_pos, my_f, 24)
+                gained = env.heal_unit_percentage(sel_pos)
+                env.add_localized_event("player_heal", gained=gained)
 
-    elif atype == "end_turn":
-        env.heal_all_unmoved_units(faction=2)
-        if not _check_and_handle_match_end(session):
-            env.execute_full_ai_turn(faction=1, model=env.opponent_model, deterministic=False)
-            if not _check_and_handle_match_end(session):
-                env.turn_count += 1
-                if env.turn_count <= 10 or env.turn_count % 3 == 0:
-                    session.active_rating = env.compute_surge_dda_step(
-                        current_rating=session.active_rating,
-                        is_early_turn=(env.turn_count <= 10)
-                    )
-                    env.set_dda_generation(session.active_rating)
-                env._prepare_faction_turn(faction=2, collect_economy=True)
-                env.record_turn_efficiency_snapshot()
-                _check_and_handle_match_end(session)
+        elif atype == "harvest" and sel_pos in env.units:
+            if env.units[sel_pos]['faction'] == my_f:
+                env.record_entity_decision('unit', sel_pos, my_f, 25)
+                bonus = env.execute_worker_harvest(sel_pos)
+                if bonus > 0.00:
+                    env.add_localized_event("player_harvest", bonus=bonus)
 
-    return session.serialize_state()
+        elif atype == "build" and sel_pos in env.units:
+            if env.units[sel_pos]['faction'] == my_f:
+                b_type = 1 if req.param == "tower" else 2
+                env.record_entity_decision('unit', sel_pos, my_f, 26 if b_type == 1 else 27)
+                if env.execute_worker_build(sel_pos, build_type=b_type):
+                    env.add_localized_event("player_build", st_type=b_type)
 
-def _check_and_handle_match_end(session: GameSession) -> bool:
-    env = session.env
-    done = False
-    winner = None
-    if env.p2_castle_hp <= 0.00:
-        done = True
-        winner = "p1"
-    elif env.p1_castle_hp <= 0.00:
-        done = True
-        winner = "p2"
-    elif env.turn_count > MAX_STEPS:
-        done = True
-        inc1, _, _, t1, u1 = env.get_faction_economy_stats(1)
-        inc2, _, _, t2, u2 = self.env.get_faction_economy_stats(2)
-        s1 = env.p1_castle_hp + t1 * 0.25 + inc1 * 4.00 + u1 * 1.50
-        s2 = env.p2_castle_hp + t2 * 0.25 + inc2 * 4.00 + u2 * 1.50
-        winner = "p1" if s1 >= s2 else "p2"
+        elif atype == "disband" and sel_pos in env.units:
+            if env.units[sel_pos]['faction'] == my_f:
+                u_type = env.units[sel_pos]['type']
+                env.record_entity_decision('unit', sel_pos, my_f, 28)
+                refund = env.execute_unit_disband(sel_pos)
+                if refund > 0.00:
+                    env.add_localized_event("player_disband", u_type=u_type, refund=refund)
+                    room.selected_by_user[uname] = None
 
-    if not done:
-        return False
+        elif atype == "demolish" and sel_pos in env.units:
+            if env.units[sel_pos]['faction'] == my_f:
+                env.record_entity_decision('unit', sel_pos, my_f, 29)
+                refund, st_t = env.execute_worker_demolish(sel_pos)
+                if refund > 0.00:
+                    env.add_localized_event("player_demolish", st_type=st_t, refund=refund)
 
-    human_won = (winner == "p2")
-    winning_fac = 2 if human_won else 1
+        elif atype == "spawn" and sel_pos is not None:
+            u_type = req.param or "warrior"
+            act_map = {'worker': 27, 'warrior': 28, 'archer': 29}
+            env.record_entity_decision('spawn', sel_pos, my_f, act_map.get(u_type, 28))
+            if env.execute_structure_spawn(sel_pos, faction=my_f, unit_type=u_type, enforce_ai_rules=False):
+                env.add_localized_event("player_spawn", u_type=u_type)
 
-    m_obs, m_acts, m_weights = env.collect_match_training_samples(
-        winning_faction=winning_fac,
-        min_efficiency=MIN_TRAINING_EFFICIENCY
-    )
-    saved_cnt = env.export_high_efficiency_telemetry(
-        winning_faction=winning_fac,
-        min_efficiency=MIN_TRAINING_EFFICIENCY
-    )
+        elif atype == "end_turn":
+            room.end_turn_for_faction(my_f)
 
-    prof = session.profile
-    prof["matches_played"] = int(prof.get("matches_played", 0)) + 1
-    wins = prof.get("recent_wins", [])
-    wins.append(1.00 if human_won else 0.00)
-    if len(wins) > 20:
-        wins.pop(0)
-    prof["recent_wins"] = wins
-
-    wr = float(np.mean(wins))
-    fast_wr = float(np.mean(wins[-5:]))
-    err_wr = wr - 0.50
-    d_wr = wr - float(prof.get("prev_winrate", 0.50))
-    prof["prev_winrate"] = round(wr, 4)
-
-    delta_macro = round((8.00 * err_wr) + (32.00 * d_wr) + (12.00 * (fast_wr - 0.50)), 2)
-    max_pool_r = max(100.00, PoolRegistry.get_max_rating() + 15.00)
-    blended = (0.55 * session.base_rating) + (0.45 * session.active_rating) + delta_macro
-    session.base_rating = round(max(10.00, min(max_pool_r, blended)), 2)
-    session.active_rating = session.base_rating
-    prof["base_rating"] = session.base_rating
-    UserProfileManager.update_profile(session.username, prof)
-
-    winner_key = "owner_player" if human_won else "owner_ai"
-    session.is_training_new_gen = True
-    session.last_evolution_report = {
-        "status": "training",
-        "winner_key": winner_key,
-        "samples": int(saved_cnt)
-    }
-
-    def _bg_evolve(obs_c, acts_c, w_c, uname, w_key):
-        try:
-            new_entry = OnlineEvolutionEngine.evolve_and_benchmark_from_match(obs_c, acts_c, w_c, username=uname)
-            session.last_evolution_report = {
-                "status": "completed",
-                "winner_key": w_key,
-                "new_gen_label": str(new_entry["label"]),
-                "new_gen_rating": float(new_entry["rating"]),
-                "gauntlet_winrate": float(new_entry["w_gauntlet"]),
-                "doctrine_alignment": float(new_entry.get("doctrine_alignment", 100.00)),
-                "samples": int(saved_cnt)
-            }
-        finally:
-            session.is_training_new_gen = False
-            session.env.set_dda_generation(session.active_rating)
-
-    threading.Thread(target=_bg_evolve, args=(m_obs, m_acts, m_weights, session.username, winner_key), daemon=True).start()
-
-    env.set_dda_generation(session.active_rating)
-    env.reset()
-    env._prepare_faction_turn(faction=2, collect_economy=False)
-    session.selected_pos = None
-    return True
+        return room.serialize_for_user(uname, lang)
 
 @app.get("/", response_class=HTMLResponse)
 def serve_index():
