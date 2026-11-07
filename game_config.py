@@ -9,7 +9,13 @@ SUPPLY_LIMIT = 8
 SUPPLY_TAX_PER_UNIT = 0.15
 CASTLE_MAX_HP = 25.00
 
+MAX_WORKERS_PER_FACTION = 4
+MIN_GOLD_RESERVE_FOR_DEFICIT_SPAWN = 20.00
+DEFICIT_RUNWAY_TURNS = 5
+EMERGENCY_RECOVERY_TARGET_UNITS = 3
+
 MIN_TRAINING_EFFICIENCY = 100.00
+MIN_COMBAT_TRAINING_EFFICIENCY = 45.00
 DISBAND_REFUND_RATIO = 0.40
 DEMOLISH_REFUND_RATIO = 0.50
 MIN_BARRACKS_CASTLE_DIST = 7
@@ -17,18 +23,12 @@ MAX_SLOW_UNIT_FRONTLINE_DIST = 10
 OSCILLATION_MEMORY_LEN = 6
 OSCILLATION_PENALTY = 40.00
 
-FACTION_CASTLE_POSITIONS = {
-    1: (GRID_SIZE - 1, 0),
-    2: (0, GRID_SIZE - 1),
-    3: (0, 0),
-    4: (GRID_SIZE - 1, GRID_SIZE - 1)
-}
-
-FACTION_COLORS = {
-    1: {"bg": "#632227", "unit": "#eb3b5a", "struct": "#c23616", "castle": "#83142c"},
-    2: {"bg": "#1b3b6f", "unit": "#0fbcf9", "struct": "#0097e6", "castle": "#0a3d62"},
-    3: {"bg": "#1e5128", "unit": "#2ecc71", "struct": "#27ae60", "castle": "#14361b"},
-    4: {"bg": "#6e511b", "unit": "#f1c40f", "struct": "#f39c12", "castle": "#4d3812"}
+ROLE_IDS = {
+    "worker": 0,
+    "warrior": 1,
+    "archer": 2,
+    "tower": 3,
+    "spawn": 4
 }
 
 EFFICIENCY_REWARDS = {
@@ -36,14 +36,23 @@ EFFICIENCY_REWARDS = {
     "neutral_capture_yield_mult": 12.00,
     "enemy_capture_base": 5.50,
     "enemy_capture_yield_mult": 14.00,
-    "damage_dealt_mult": 3.20,
-    "unit_kill_bonus": 8.00,
-    "struct_kill_bonus": 7.00,
-    "castle_hit_bonus": 4.50,
+    "combat_capture_scale": 0.12,
+    "damage_dealt_mult": 4.50,
+    "unit_kill_bonus": 14.00,
+    "struct_kill_bonus": 11.00,
+    "castle_hit_bonus": 8.50,
     "harvest_bonus_mult": 6.50,
     "build_struct_bonus": 8.00,
     "heal_mult": 0.80,
+    "retreat_penalty": 8.00,
     "early_death_penalty": 5.00
+}
+
+FACTION_CASTLE_POSITIONS = {
+    1: (GRID_SIZE - 1, 0),
+    2: (0, GRID_SIZE - 1),
+    3: (0, 0),
+    4: (GRID_SIZE - 1, GRID_SIZE - 1)
 }
 
 POOL_DIR = "./selfplay_pool/"
