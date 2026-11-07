@@ -12,103 +12,17 @@ import gymnasium as gym
 from gymnasium import spaces
 from collections import deque, OrderedDict
 from stable_baselines3 import PPO
-import game_config
 
-GRID_SIZE = getattr(game_config, "GRID_SIZE", 18)
-MAX_STEPS = getattr(game_config, "MAX_STEPS", 300)
-MAX_GOLD = getattr(game_config, "MAX_GOLD", 100.00)
-INITIAL_GOLD = getattr(game_config, "INITIAL_GOLD", 12.00)
-HEAL_PCT = getattr(game_config, "HEAL_PCT", 0.25)
-SUPPLY_LIMIT = getattr(game_config, "SUPPLY_LIMIT", 8)
-SUPPLY_TAX_PER_UNIT = getattr(game_config, "SUPPLY_TAX_PER_UNIT", 0.15)
-CASTLE_MAX_HP = getattr(game_config, "CASTLE_MAX_HP", 25.00)
-
-MIN_TRAINING_EFFICIENCY = getattr(game_config, "MIN_TRAINING_EFFICIENCY", 100.00)
-DISBAND_REFUND_RATIO = getattr(game_config, "DISBAND_REFUND_RATIO", 0.40)
-DEMOLISH_REFUND_RATIO = getattr(game_config, "DEMOLISH_REFUND_RATIO", 0.50)
-MIN_BARRACKS_CASTLE_DIST = getattr(game_config, "MIN_BARRACKS_CASTLE_DIST", 7)
-MAX_SLOW_UNIT_FRONTLINE_DIST = getattr(game_config, "MAX_SLOW_UNIT_FRONTLINE_DIST", 10)
-OSCILLATION_MEMORY_LEN = getattr(game_config, "OSCILLATION_MEMORY_LEN", 6)
-OSCILLATION_PENALTY = getattr(game_config, "OSCILLATION_PENALTY", 40.00)
-
-EFFICIENCY_REWARDS = getattr(game_config, "EFFICIENCY_REWARDS", {
-    "neutral_capture_base": 3.50,
-    "neutral_capture_yield_mult": 12.00,
-    "enemy_capture_base": 5.50,
-    "enemy_capture_yield_mult": 14.00,
-    "damage_dealt_mult": 3.20,
-    "unit_kill_bonus": 8.00,
-    "struct_kill_bonus": 7.00,
-    "castle_hit_bonus": 4.50,
-    "harvest_bonus_mult": 6.50,
-    "build_struct_bonus": 8.00,
-    "heal_mult": 0.80,
-    "early_death_penalty": 5.00
-})
-
-POOL_DIR = getattr(game_config, "POOL_DIR", "./selfplay_pool/")
-HUMAN_TELEMETRY_FILE = getattr(game_config, "HUMAN_TELEMETRY_FILE", os.path.join(POOL_DIR, "human_telemetry.npz"))
-POOL_REGISTRY_FILE = getattr(game_config, "POOL_REGISTRY_FILE", os.path.join(POOL_DIR, "pool_registry.json"))
-USERS_DB_FILE = getattr(game_config, "USERS_DB_FILE", os.path.join(POOL_DIR, "users_db.json"))
-
-TILE_VALUES = game_config.TILE_VALUES
-UNIT_STATS = game_config.UNIT_STATS
-STRUCT_STATS = game_config.STRUCT_STATS
-RELATIVE_OFFSETS = game_config.RELATIVE_OFFSETS
-
-DEFAULT_LOCALIZATION = {
-    "en": {
-        "match_started": "Match started. Select a blue unit or your castle.",
-        "bankruptcy_ai": "BANKRUPTCY: Red Empire (AI) loses its army due to treasury deficit!",
-        "bankruptcy_player": "BANKRUPTCY: Blue Alliance (You) loses its army due to treasury deficit!",
-        "ai_attack": "AI: {unit} attacked ({r},{c}) for -{dmg:.2f} HP",
-        "ai_harvest": "AI: Worker harvested resource (+{bonus:.2f}$)",
-        "ai_build_tower": "AI built a Defense Tower",
-        "ai_build_barracks": "AI built a Forward Barracks",
-        "ai_disband": "AI disbanded {unit} (+{refund:.2f}$)",
-        "ai_demolish": "AI Worker demolished structure (+{refund:.2f}$)",
-        "ai_tower_shot": "AI: Tower fired at ({r},{c}) for -{dmg:.2f} HP",
-        "ai_spawn": "AI recruited {unit}",
-        "ai_turn_summary": "Turn {turn}: AI executed {moves} moves and {atks} attacks."
-    },
-    "uk": {
-        "match_started": "Партію розпочато. Оберіть синій підрозділ або замок.",
-        "bankruptcy_ai": "БАНКРУТСТВО: Червона Імперія (ШІ) втрачає армію через дефіцит казни!",
-        "bankruptcy_player": "БАНКРУТСТВО: Синій Альянс (Ви) втрачає армію через дефіцит казни!",
-        "ai_attack": "ШІ: {unit} атакував ціль ({r},{c}) на -{dmg:.2f} HP",
-        "ai_harvest": "ШІ: Робітник обробив родовище (+{bonus:.2f}$)",
-        "ai_build_tower": "ШІ звів Оборонну Вежу",
-        "ai_build_barracks": "ШІ звів Передову Казарму",
-        "ai_disband": "ШІ розпустив підрозділ {unit} (+{refund:.2f}$)",
-        "ai_demolish": "ШІ: Робітник зніс споруду (+{refund:.2f}$)",
-        "ai_tower_shot": "ШІ: Вежа обстріляла ({r},{c}) на -{dmg:.2f} HP",
-        "ai_spawn": "ШІ найняв підрозділ: {unit}",
-        "ai_turn_summary": "Хід {turn}: ШІ виконав {moves} переміщень та {atks} атак."
-    }
-}
-
-def get_text(lang: str, key: str, **kwargs) -> str:
-    if hasattr(game_config, "get_text"):
-        return game_config.get_text(lang, key, **kwargs)
-    loc = DEFAULT_LOCALIZATION.get(lang, DEFAULT_LOCALIZATION["en"])
-    template = loc.get(key, DEFAULT_LOCALIZATION["en"].get(key, key))
-    return template.format(**kwargs) if kwargs else template
-
-def get_unit_name(u_type: str, lang: str = "en") -> str:
-    if hasattr(game_config, "get_unit_name"):
-        return game_config.get_unit_name(u_type, lang)
-    st = UNIT_STATS.get(u_type, {})
-    if lang in ("uk", "ua"):
-        return st.get("name_uk", st.get("name_ua", st.get("name", u_type)))
-    return st.get("name_en", st.get("name", u_type))
-
-def get_struct_name(st_type: int, lang: str = "en") -> str:
-    if hasattr(game_config, "get_struct_name"):
-        return game_config.get_struct_name(st_type, lang)
-    st = STRUCT_STATS.get(int(st_type), {})
-    if lang in ("uk", "ua"):
-        return st.get("name_uk", st.get("name_ua", st.get("name", str(st_type))))
-    return st.get("name_en", st.get("name", str(st_type)))
+from game_config import (
+    GRID_SIZE, MAX_STEPS, MAX_GOLD, INITIAL_GOLD, HEAL_PCT,
+    SUPPLY_LIMIT, SUPPLY_TAX_PER_UNIT, CASTLE_MAX_HP,
+    MIN_TRAINING_EFFICIENCY, DISBAND_REFUND_RATIO, DEMOLISH_REFUND_RATIO,
+    MIN_BARRACKS_CASTLE_DIST, MAX_SLOW_UNIT_FRONTLINE_DIST,
+    OSCILLATION_MEMORY_LEN, OSCILLATION_PENALTY, EFFICIENCY_REWARDS,
+    POOL_DIR, HUMAN_TELEMETRY_FILE, POOL_REGISTRY_FILE, USERS_DB_FILE,
+    TILE_VALUES, UNIT_STATS, STRUCT_STATS, RELATIVE_OFFSETS
+)
+from localization import normalize_lang, get_text, get_unit_name, get_struct_name
 
 _orig_torch_load = torch.load
 def _permissive_torch_load(*args, **kwargs):
@@ -290,7 +204,7 @@ class MicroRTSEnv(gym.Env):
         self.grid_size = GRID_SIZE
         self.mode = mode
         self.record_telemetry = record_telemetry
-        self.lang = lang if lang in ("en", "uk", "ua") else "en"
+        self.lang = normalize_lang(lang)
         self.action_space = spaces.Discrete(30)
         self.observation_space = spaces.Box(
             low=0.00, high=1.00,
@@ -330,12 +244,40 @@ class MicroRTSEnv(gym.Env):
             "active_label": []
         }
         self.last_ai_turn_traces = []
+        self.turn_event_records = []
         self.turn_event_log = []
 
         self.reset()
 
     def set_language(self, lang: str):
-        self.lang = lang if lang in ("en", "uk", "ua") else "en"
+        self.lang = normalize_lang(lang)
+        self._rerender_event_log()
+
+    def add_localized_event(self, key: str, **kwargs):
+        self.turn_event_records.append({"key": key, "kwargs": kwargs})
+        if len(self.turn_event_records) > 8:
+            self.turn_event_records = self.turn_event_records[-8:]
+        self._rerender_event_log()
+
+    def _rerender_event_log(self):
+        rendered = []
+        for item in self.turn_event_records:
+            if "raw" in item:
+                rendered.append(str(item["raw"]))
+            else:
+                kw = dict(item.get("kwargs", {}))
+                if "u_type" in kw:
+                    kw["unit"] = get_unit_name(kw.pop("u_type"), self.lang)
+                if "st_type" in kw:
+                    kw["struct"] = get_struct_name(kw.pop("st_type"), self.lang)
+                rendered.append(get_text(self.lang, item["key"], **kw))
+        self.turn_event_log = rendered
+
+    def add_event_log(self, msg: str):
+        self.turn_event_records.append({"raw": str(msg)})
+        if len(self.turn_event_records) > 8:
+            self.turn_event_records = self.turn_event_records[-8:]
+        self._rerender_event_log()
 
     def set_curriculum_tier(self, tier: int):
         self.curriculum_tier = int(np.clip(tier, 1, 5))
@@ -532,11 +474,6 @@ class MicroRTSEnv(gym.Env):
             'recent_positions': deque(maxlen=OSCILLATION_MEMORY_LEN)
         }
 
-    def add_event_log(self, msg: str):
-        self.turn_event_log.append(str(msg))
-        if len(self.turn_event_log) > 8:
-            self.turn_event_log = self.turn_event_log[-8:]
-
     def compute_faction_total_efficiency(self, faction: int) -> float:
         alive_eff = sum(float(u.get('efficiency', 0.00)) for u in self.units.values() if u['faction'] == faction)
         arch_eff = sum(float(u.get('efficiency', 0.00)) for u in self.archived_units if u['faction'] == faction)
@@ -610,7 +547,8 @@ class MicroRTSEnv(gym.Env):
         self.step_count = 0
         self.p1_entity_queue = deque()
         self.last_ai_turn_traces = []
-        self.turn_event_log = [get_text(self.lang, "match_started")]
+        self.turn_event_records = []
+        self.add_localized_event("match_started")
         self._prepare_faction_turn(faction=1, collect_economy=False)
 
         self.efficiency_timeline = {
@@ -807,7 +745,7 @@ class MicroRTSEnv(gym.Env):
                 new_gold = 0.00
                 self._fp_dirty = True
                 msg_key = "bankruptcy_ai" if faction == 1 else "bankruptcy_player"
-                self.add_event_log(get_text(self.lang, msg_key))
+                self.add_localized_event(msg_key)
             else:
                 new_gold = min(MAX_GOLD, new_gold)
 
@@ -1896,7 +1834,6 @@ class MicroRTSEnv(gym.Env):
             if pos not in self.units:
                 return 0.00
             u_type = self.units[pos]['type']
-            u_name = get_unit_name(u_type, self.lang)
             if 0 <= action <= 11:
                 dr, dc = RELATIVE_OFFSETS[action]
                 dest = (r + dr, c + dc)
@@ -1917,7 +1854,7 @@ class MicroRTSEnv(gym.Env):
                 reward += dmg * 0.12
                 if dmg > 0.00 and faction == 1:
                     self.last_ai_turn_traces.append({"kind": "attack", "from": [int(r), int(c)], "to": [int(target[0]), int(target[1])]})
-                    self.add_event_log(get_text(self.lang, "ai_attack", unit=u_name, r=target[0], c=target[1], dmg=dmg))
+                    self.add_localized_event("ai_attack", u_type=u_type, r=target[0], c=target[1], dmg=dmg)
             elif action == 24:
                 healed = self.heal_unit_percentage(pos)
                 reward += healed * 0.04
@@ -1925,29 +1862,29 @@ class MicroRTSEnv(gym.Env):
                 bonus = self.execute_worker_harvest(pos)
                 reward += bonus * 0.20
                 if bonus > 0.00 and faction == 1:
-                    self.add_event_log(get_text(self.lang, "ai_harvest", bonus=bonus))
+                    self.add_localized_event("ai_harvest", bonus=bonus)
             elif action == 26:
                 if self.execute_worker_build(pos, build_type=1):
                     reward += 0.22
                     if faction == 1:
-                        self.add_event_log(get_text(self.lang, "ai_build_tower"))
+                        self.add_localized_event("ai_build_tower")
             elif action == 27:
                 if self.execute_worker_build(pos, build_type=2):
                     reward += 0.30
                     if faction == 1:
-                        self.add_event_log(get_text(self.lang, "ai_build_barracks"))
+                        self.add_localized_event("ai_build_barracks")
             elif action == 28:
                 refund = self.execute_unit_disband(pos)
                 if refund > 0.00:
                     reward += 0.15 if (self.turn_count <= 2 and u_type == 'archer') else -0.05
                     if faction == 1:
-                        self.add_event_log(get_text(self.lang, "ai_disband", unit=u_name, refund=refund))
+                        self.add_localized_event("ai_disband", u_type=u_type, refund=refund)
             elif action == 29:
                 refund, st_t = self.execute_worker_demolish(pos)
                 if refund > 0.00:
                     reward += 0.10
                     if faction == 1:
-                        self.add_event_log(get_text(self.lang, "ai_demolish", refund=refund))
+                        self.add_localized_event("ai_demolish", refund=refund)
 
         elif entity_kind == 'tower':
             if 12 <= action <= 23:
@@ -1957,7 +1894,7 @@ class MicroRTSEnv(gym.Env):
                 reward += dmg * 0.10
                 if dmg > 0.00 and faction == 1:
                     self.last_ai_turn_traces.append({"kind": "attack", "from": [int(r), int(c)], "to": [int(target[0]), int(target[1])]})
-                    self.add_event_log(get_text(self.lang, "ai_tower_shot", r=target[0], c=target[1], dmg=dmg))
+                    self.add_localized_event("ai_tower_shot", r=target[0], c=target[1], dmg=dmg)
             else:
                 self.tower_ready[r, c] = False
 
@@ -1966,17 +1903,17 @@ class MicroRTSEnv(gym.Env):
                 if self.execute_structure_spawn(pos, faction, 'worker'):
                     reward += 0.08
                     if faction == 1:
-                        self.add_event_log(get_text(self.lang, "ai_spawn", unit=get_unit_name('worker', self.lang)))
+                        self.add_localized_event("ai_spawn", u_type="worker")
             elif action == 28:
                 if self.execute_structure_spawn(pos, faction, 'warrior'):
                     reward += 0.12
                     if faction == 1:
-                        self.add_event_log(get_text(self.lang, "ai_spawn", unit=get_unit_name('warrior', self.lang)))
+                        self.add_localized_event("ai_spawn", u_type="warrior")
             elif action == 29:
                 if self.execute_structure_spawn(pos, faction, 'archer'):
                     reward += 0.14
                     if faction == 1:
-                        self.add_event_log(get_text(self.lang, "ai_spawn", unit=get_unit_name('archer', self.lang)))
+                        self.add_localized_event("ai_spawn", u_type="archer")
 
         return float(reward)
 
@@ -2048,7 +1985,7 @@ class MicroRTSEnv(gym.Env):
         if faction == 1:
             moves_cnt = sum(1 for t in self.last_ai_turn_traces if t["kind"] == "move")
             atks_cnt = sum(1 for t in self.last_ai_turn_traces if t["kind"] == "attack")
-            self.add_event_log(get_text(self.lang, "ai_turn_summary", turn=self.turn_count, moves=moves_cnt, atks=atks_cnt))
+            self.add_localized_event("ai_turn_summary", turn=self.turn_count, moves=moves_cnt, atks=atks_cnt)
 
     def _get_obs_for_entity(self, entity_kind: str, pos: tuple, faction: int) -> np.ndarray:
         enemy_faction = 2 if faction == 1 else 1

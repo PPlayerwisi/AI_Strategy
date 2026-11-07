@@ -2,8 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Faction Warfare RTS — Multi-User Evolutionary Platform</title>
-    <link rel="stylesheet" href="/static/style.css" />
+    <title id="page-title">Faction Warfare RTS</title>
+    <link rel="stylesheet" href="/static/style.css?v=3" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body>
@@ -13,143 +13,112 @@
 
     <div id="right-pane">
       <div class="box">
-        <div id="lbl-box-profile" class="box-title">USER PROFILE</div>
+        <div id="lbl-box-profile" class="box-title"></div>
         <div class="profile-bar">
-          <input
-            type="text"
-            id="username-inp"
-            value=""
-            placeholder="Username..."
-          />
-          <button id="btn-login" onclick="switchProfile()">Login</button>
+          <input type="text" id="username-inp" value="" placeholder="" />
+          <button id="btn-login" onclick="switchProfile()"></button>
           <button
             id="btn-lang"
-            style="background: #576574; color: #ffffff"
+            style="background: #576574; color: #ffffff; min-width: 44px"
             onclick="toggleLanguage()"
-          >
-            UK
-          </button>
+          ></button>
         </div>
       </div>
 
       <div class="box">
-        <div id="lbl-box-telemetry" class="box-title">
-          SESSION TELEMETRY AND AI STATUS
-        </div>
+        <div id="lbl-box-telemetry" class="box-title"></div>
         <div id="telemetry-text"></div>
-        <div id="gen-live-badge" class="gen-badge">
-          Active Generation: Loading...
-        </div>
+        <div id="gen-live-badge" class="gen-badge"></div>
         <div id="evo-banner"></div>
       </div>
 
       <div class="box">
-        <div id="lbl-box-inspector" class="box-title">OBJECT INSPECTOR</div>
+        <div id="lbl-box-inspector" class="box-title"></div>
         <div id="inspector-text"></div>
       </div>
 
       <div class="box">
-        <div id="lbl-box-orders" class="box-title">
-          UNIT ORDERS AND CONSTRUCTION
-        </div>
+        <div id="lbl-box-orders" class="box-title"></div>
         <button
           id="b-heal"
           class="btn-act"
           style="background: #10ac84"
           onclick="sendAct('heal')"
-        >
-          Heal Unit (+25.00% max HP)
-        </button>
+        ></button>
         <button
           id="b-harv"
           class="btn-act"
           style="background: #d35400"
           onclick="sendAct('harvest')"
-        >
-          Extra Tile Harvest (+1.50x)
-        </button>
+        ></button>
         <button
           id="b-tow"
           class="btn-act"
           style="background: #576574"
           onclick="sendAct('build', null, null, 'tower')"
-        >
-          Build Defense Tower (4.00$)
-        </button>
+        ></button>
         <button
           id="b-bar"
           class="btn-act"
           style="background: #576574"
           onclick="sendAct('build', null, null, 'barracks')"
-        >
-          Build Forward Barracks (5.00$)
-        </button>
+        ></button>
         <button
           id="b-dem"
           class="btn-act"
           style="background: #8e44ad"
           onclick="sendAct('demolish')"
-        >
-          Demolish Allied Structure (+50.00% refund)
-        </button>
+        ></button>
         <button
           id="b-dis"
           class="btn-act"
           style="background: #c0392b"
           onclick="sendAct('disband')"
-        >
-          Disband Selected Unit (+40.00% refund)
-        </button>
+        ></button>
         <button
           id="b-swk"
           class="btn-act"
           onclick="sendAct('spawn', null, null, 'worker')"
-        >
-          Recruit Worker (3.00$ | Upkeep: 0.40$)
-        </button>
+        ></button>
         <button
           id="b-swr"
           class="btn-act"
           onclick="sendAct('spawn', null, null, 'warrior')"
-        >
-          Recruit Warrior (6.00$ | Upkeep: 1.10$)
-        </button>
+        ></button>
         <button
           id="b-sar"
           class="btn-act"
           onclick="sendAct('spawn', null, null, 'archer')"
-        >
-          Recruit Archer (8.50$ | Upkeep: 1.60$)
-        </button>
+        ></button>
       </div>
 
-      <button id="b-stats" class="btn-act btn-stats" onclick="openStatsModal()">
-        Efficiency Statistics (Chart and Median)
-      </button>
-      <button id="b-end" class="btn-act btn-end" onclick="sendAct('end_turn')">
-        End Turn (Auto-Heal and AI Turn)
-      </button>
+      <button
+        id="b-stats"
+        class="btn-act btn-stats"
+        onclick="openStatsModal()"
+      ></button>
+      <button
+        id="b-end"
+        class="btn-act btn-end"
+        onclick="sendAct('end_turn')"
+      ></button>
     </div>
 
     <div id="modal-overlay">
       <div id="modal-card">
         <div class="modal-header">
-          <span id="lbl-modal-title" class="modal-title"
-            >Efficiency Growth Dynamics and Median from Match Start</span
-          >
+          <span id="lbl-modal-title" class="modal-title"></span>
           <button
             id="btn-modal-close"
             onclick="closeStatsModal()"
             class="btn-close"
-          >
-            Close
-          </button>
+          ></button>
         </div>
         <div id="stats-summary"></div>
         <canvas id="effChart" height="125"></canvas>
       </div>
     </div>
 
-    <script src="/static/game.js"></script>
+    <script src="/static/game.js?v=3"></script>
   </body>
 </html>

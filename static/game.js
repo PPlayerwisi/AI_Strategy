@@ -6,119 +6,6 @@ let camX = 26.0, camY = 26.0;
 let isPanning = false, panStartX = 0, panStartY = 0;
 let chartInstance = null;
 
-const UI_LOC = {
-  en: {
-    boxProfile: "USER PROFILE",
-    placeholderUser: "Username...",
-    btnLogin: "Login",
-    btnLangToggle: "UK",
-    boxTelemetry: "SESSION TELEMETRY AND AI STATUS",
-    boxInspector: "OBJECT INSPECTOR",
-    boxOrders: "UNIT ORDERS AND CONSTRUCTION",
-    btnHeal: "Heal Unit (+25.00% max HP)",
-    btnHarv: "Extra Tile Harvest (+1.50x)",
-    btnTow: "Build Defense Tower (4.00$)",
-    btnBar: "Build Forward Barracks (5.00$)",
-    btnDem: "Demolish Allied Structure (+50.00% refund)",
-    btnDis: "Disband Selected Unit (+40.00% refund)",
-    btnSwk: "Recruit Worker (3.00$ | Upkeep: 0.40$)",
-    btnSwr: "Recruit Warrior (6.00$ | Upkeep: 1.10$)",
-    btnSar: "Recruit Archer (8.50$ | Upkeep: 1.60$)",
-    btnStats: "Efficiency Statistics (Chart and Median)",
-    btnEnd: "End Turn (Auto-Heal and AI Turn)",
-    modalTitle: "Efficiency Growth Dynamics and Median from Match Start",
-    btnClose: "Close",
-    playerLabel: "Player",
-    matchLabel: "Match",
-    turnLabel: "Turn",
-    winrateLabel: "Profile Winrate",
-    poolModelsLabel: "Pool Models",
-    maxLabel: "Max",
-    blueLabel: "BLUE (YOU)",
-    redLabel: "RED (AI)  ",
-    goldLabel: "Gold",
-    landLabel: "Land",
-    armyLabel: "Army",
-    upkeepLabel: "Upkeep",
-    netLabel: "Net",
-    perTurn: "/t",
-    activeGenPrefix: "Active AI",
-    ratingLabel: "Rating",
-    baseLabel: "Base",
-    evoTraining: "[Evolution] Training new generation on elite units >=100 eff",
-    evoSamples: "samples",
-    evoAdded: "[Pool] Added",
-    evoDoc: "Doctrine",
-    towerShort: "TW ",
-    barracksShort: "BR ",
-    aiCastleShort: "AI CST",
-    yourCastleShort: "YOUR CST",
-    statsPlayerCurr: "Your Faction Current Efficiency",
-    statsAiCurr: "AI Current Efficiency",
-    medianWord: "Median",
-    chartTurn: "Turn",
-    chartPlayerEff: "Player Efficiency (Blue)",
-    chartPlayerMed: "Player Median",
-    chartAiEff: "AI Efficiency (Red)",
-    chartAiMed: "AI Median"
-  },
-  uk: {
-    boxProfile: "ПРОФІЛЬ КОРИСТУВАЧА",
-    placeholderUser: "Нікнейм...",
-    btnLogin: "Увійти",
-    btnLangToggle: "EN",
-    boxTelemetry: "ТЕЛЕМЕТРІЯ СЕСІЇ ТА СТАН ШІ",
-    boxInspector: "ІНСПЕКТОР ОБ'ЄКТА",
-    boxOrders: "КЕРУВАННЯ ПІДРОЗДІЛАМИ ТА БУДІВНИЦТВО",
-    btnHeal: "Лікувати юніта (+25.00% макс. HP)",
-    btnHarv: "Додаткова обробка клітинки (+1.50x)",
-    btnTow: "Звести оборонну вежу (4.00$)",
-    btnBar: "Звести передову казарму (5.00$)",
-    btnDem: "Знести союзну споруду (+50.00% повернення)",
-    btnDis: "Розпустити обраного юніта (+40.00% повернення)",
-    btnSwk: "Найняти робітника (3.00$ | Утрим: 0.40$)",
-    btnSwr: "Найняти піхотинця (6.00$ | Утрим: 1.10$)",
-    btnSar: "Найняти стрільця (8.50$ | Утрим: 1.60$)",
-    btnStats: "Статистика ефективності (Графік та медіана)",
-    btnEnd: "Кінець ходу (Авто-лікування та хід ШІ)",
-    modalTitle: "Динаміка ефективності та медіана від початку партії",
-    btnClose: "Закрити",
-    playerLabel: "Гравець",
-    matchLabel: "Партія",
-    turnLabel: "Хід",
-    winrateLabel: "Вінрейт профілю",
-    poolModelsLabel: "Моделей у пулі",
-    maxLabel: "Макс",
-    blueLabel: "СИНІ (ВИ) ",
-    redLabel: "ЧЕРВОНІ ШІ",
-    goldLabel: "Казна",
-    landLabel: "Землі",
-    armyLabel: "Армія",
-    upkeepLabel: "Утрим",
-    netLabel: "Баланс",
-    perTurn: "/х",
-    activeGenPrefix: "Зараз грає",
-    ratingLabel: "Рейтинг",
-    baseLabel: "Базовий",
-    evoTraining: "[Еволюція] Навчання нового покоління на еліті >=100 еф.",
-    evoSamples: "зразків",
-    evoAdded: "[Пул] Додано",
-    evoDoc: "Доктрина",
-    towerShort: "ВЖ ",
-    barracksShort: "КЗ ",
-    aiCastleShort: "ЗМ ШІ",
-    yourCastleShort: "ВАШ ЗМ",
-    statsPlayerCurr: "Поточна ефективність Вашої Фракції",
-    statsAiCurr: "Поточна ефективність ШІ",
-    medianWord: "Медіана",
-    chartTurn: "Хід",
-    chartPlayerEff: "Ефективність Гравця (Сині)",
-    chartPlayerMed: "Медіана Гравця",
-    chartAiEff: "Ефективність Нейромережі (Червоні)",
-    chartAiMed: "Медіана ШІ"
-  }
-};
-
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -186,8 +73,9 @@ canvas.addEventListener("wheel", e => {
   drawBoard();
 });
 
-function applyStaticLabels() {
-  const t = UI_LOC[currentLang] || UI_LOC.en;
+function applyStaticLabels(t) {
+  if (!t) return;
+  document.title = t.pageTitle || "Faction Warfare RTS";
   document.getElementById("lbl-box-profile").textContent = t.boxProfile;
   document.getElementById("username-inp").placeholder = t.placeholderUser;
   document.getElementById("btn-login").textContent = t.btnLogin;
@@ -213,7 +101,6 @@ function applyStaticLabels() {
 async function toggleLanguage() {
   const nextLang = currentLang === "en" ? "uk" : "en";
   currentLang = nextLang;
-  applyStaticLabels();
   await sendAct("set_lang", null, null, currentLang);
 }
 
@@ -231,9 +118,8 @@ async function fetchState() {
     });
     if (!res.ok) throw new Error("HTTP error " + res.status);
     state = await res.json();
-    if (state.lang && (state.lang === "en" || state.lang === "uk")) {
+    if (state.lang) {
       currentLang = state.lang;
-      applyStaticLabels();
     }
     updateUI();
   } catch (err) {
@@ -250,6 +136,9 @@ async function sendAct(action_type, r = null, c = null, param = null) {
     });
     if (!res.ok) throw new Error("HTTP error " + res.status);
     state = await res.json();
+    if (state.lang) {
+      currentLang = state.lang;
+    }
     updateUI();
   } catch (err) {
     console.error("Action execution error:", err);
@@ -257,8 +146,9 @@ async function sendAct(action_type, r = null, c = null, param = null) {
 }
 
 function updateUI() {
-  if (!state) return;
-  const t = UI_LOC[currentLang] || UI_LOC.en;
+  if (!state || !state.ui_text) return;
+  const t = state.ui_text;
+  applyStaticLabels(t);
 
   document.getElementById("telemetry-text").textContent =
     `${t.playerLabel}: ${state.username} | ${t.matchLabel}: #${state.matches_played + 1} | ${t.turnLabel}: ${state.turn}/${state.max_turns}\n` +
@@ -300,6 +190,9 @@ function updateUI() {
   document.getElementById("b-sar").disabled = !state.inspector.can_spawn_archer;
 
   drawBoard();
+  if (document.getElementById("modal-overlay").style.display === "flex") {
+    openStatsModal();
+  }
 }
 
 function drawUnitIcon(cx, cy, rad, uType, faction) {
@@ -342,8 +235,8 @@ function drawUnitIcon(cx, cy, rad, uType, faction) {
 }
 
 function drawBoard() {
-  if (!state) return;
-  const t = UI_LOC[currentLang] || UI_LOC.en;
+  if (!state || !state.ui_text) return;
+  const t = state.ui_text;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const cs = cellSize, ox = camX, oy = camY, boardPx = 18 * cs;
 
@@ -449,13 +342,14 @@ function drawBoard() {
     ctx.strokeRect(x + 2, y + 2, cs - 4, cs - 4);
   }
 
+  const minEff = (state.config && state.config.min_training_eff) ? state.config.min_training_eff : 100.0;
   for (const u of state.units) {
     const cx = ox + u.c * cs + cs * 0.5, cy = oy + u.r * cs + cs * 0.48, rad = cs * 0.34;
     ctx.fillStyle = u.faction === 1 ? "#eb3b5a" : "#0fbcf9";
     ctx.beginPath();
     ctx.arc(cx, cy, rad, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = (u.faction === 2 && u.ready) ? "#2ecc71" : (u.efficiency >= 100.0 ? "#feca57" : "#dcdde1");
+    ctx.strokeStyle = (u.faction === 2 && u.ready) ? "#2ecc71" : (u.efficiency >= minEff ? "#feca57" : "#dcdde1");
     ctx.lineWidth = 2;
     ctx.stroke();
     drawUnitIcon(cx, cy, rad, u.type, u.faction);
@@ -476,8 +370,8 @@ function drawBoard() {
 }
 
 function openStatsModal() {
-  if (!state || !state.stats) return;
-  const t = UI_LOC[currentLang] || UI_LOC.en;
+  if (!state || !state.stats || !state.ui_text) return;
+  const t = state.ui_text;
   document.getElementById("modal-overlay").style.display = "flex";
   const st = state.stats;
   document.getElementById("stats-summary").textContent =
@@ -523,7 +417,6 @@ async function initApp() {
     currentUser = data.username;
     currentLang = data.lang || "en";
     document.getElementById("username-inp").value = currentUser;
-    applyStaticLabels();
     await fetchState();
   } catch (err) {
     console.error("Guest init error:", err);

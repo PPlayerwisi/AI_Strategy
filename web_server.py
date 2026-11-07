@@ -16,10 +16,10 @@ from game_config import (
     RELATIVE_OFFSETS, USERS_DB_FILE, POOL_DIR,
     MIN_TRAINING_EFFICIENCY, DISBAND_REFUND_RATIO, DEMOLISH_REFUND_RATIO
 )
-from microrts_env import (
-    MicroRTSEnv, PoolRegistry, OnlineEvolutionEngine,
-    get_text, get_unit_name, get_struct_name
+from localization import (
+    normalize_lang, get_text, get_unit_name, get_struct_name, get_ui_bundle
 )
+from microrts_env import MicroRTSEnv, PoolRegistry, OnlineEvolutionEngine
 
 app = FastAPI(title="Faction Warfare RTS — Multi-User Evolutionary Platform")
 
@@ -29,68 +29,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 USERS_LOCK = threading.Lock()
 ACTIVE_SESSIONS = {}
-
-SERVER_TEXT = {
-    "en": {
-        "nothing_selected": "Nothing selected",
-        "click_prompt": "Click on any unit, tower, barracks, or castle on the map.",
-        "owner_neutral": "Neutral (Gray)",
-        "owner_ai": "Red Empire (AI)",
-        "owner_player": "Blue Alliance (You)",
-        "land_built": "Land: +0.00$/turn [Built-up, base: +{base:.2f}$] ({owner})",
-        "land_free": "Land: +{eff:.2f}$/turn ({owner})",
-        "unit_header": "Unit: {name} [{faction}] — {status}",
-        "status_ready": "READY",
-        "status_moved": "ACTED THIS TURN",
-        "hp_line": "Health: {hp:.2f} / {max_hp:.2f} HP ({pct:.2f}%)",
-        "stats_line": "Move: {move} tiles | Attack range: {atk} tiles | Dmg: {dmg:.2f}",
-        "upkeep_line": "Upkeep: {upk:.2f}$/turn | Efficiency: {eff:.2f}",
-        "your_castle": "Structure: YOUR CASTLE ({hp:.2f} / {max_hp:.2f} HP)",
-        "castle_occupied": "Castle tile is occupied by a unit — move it out to recruit.",
-        "ai_castle": "Structure: AI CASTLE ({hp:.2f} / {max_hp:.2f} HP)",
-        "struct_line": "Structure: {name} ({hp:.2f} / {max_hp:.2f} HP)",
-        "player_move": "You: {unit} moved to ({r},{c})",
-        "player_attack": "You: dealt {dmg:.2f} dmg to target ({r},{c})",
-        "player_heal": "You: unit restored +{gained:.2f} HP",
-        "player_harvest": "You: Worker harvested +{bonus:.2f}$",
-        "player_build": "You: Worker built {struct}",
-        "player_spawn": "You: recruited {unit}",
-        "player_disband": "You: disbanded {unit} (+{refund:.2f}$)",
-        "player_demolish": "You: Worker demolished {struct} (+{refund:.2f}$)"
-    },
-    "uk": {
-        "nothing_selected": "Нічого не обрано",
-        "click_prompt": "Клікніть на будь-якого юніта, вежу, казарму або замок на карті.",
-        "owner_neutral": "Нейтральна (Сіра)",
-        "owner_ai": "Червона Імперія (ШІ)",
-        "owner_player": "Синій Альянс (Ви)",
-        "land_built": "Земля: +0.00$/хід [Забудовано, базова: +{base:.2f}$] ({owner})",
-        "land_free": "Земля: +{eff:.2f}$/хід ({owner})",
-        "unit_header": "Підрозділ: {name} [{faction}] — {status}",
-        "status_ready": "ГОТОВИЙ ДО ДІЇ",
-        "status_moved": "ВЖЕ ХОДИВ У ЦЬОМУ РАУНДІ",
-        "hp_line": "Здоров'я: {hp:.2f} / {max_hp:.2f} HP ({pct:.2f}%)",
-        "stats_line": "Рух: {move} кліт. | Дальність атаки: {atk} кліт. | Шкода: {dmg:.2f}",
-        "upkeep_line": "Плата за службу: {upk:.2f}$/хід | Ефективність: {eff:.2f}",
-        "your_castle": "Споруда: ВАШ ЗАМОК ({hp:.2f} / {max_hp:.2f} HP)",
-        "castle_occupied": "Замок зайнятий юнітом — виведіть його для найму нового.",
-        "ai_castle": "Споруда: ЗАМОК ШІ ({hp:.2f} / {max_hp:.2f} HP)",
-        "struct_line": "Споруда: {name} ({hp:.2f} / {max_hp:.2f} HP)",
-        "player_move": "Ви: {unit} перемістився на ({r},{c})",
-        "player_attack": "Ви: завдано {dmg:.2f} шкоди по цілі ({r},{c})",
-        "player_heal": "Ви: підрозділ відновив +{gained:.2f} HP",
-        "player_harvest": "Ви: Робітник добув додатково +{bonus:.2f}$",
-        "player_build": "Ви: Робітник звів {struct}",
-        "player_spawn": "Ви: найнято підрозділ ({unit})",
-        "player_disband": "Ви: розпущено {unit} (+{refund:.2f}$)",
-        "player_demolish": "Ви: Робітник зніс {struct} (+{refund:.2f}$)"
-    }
-}
-
-def srv_txt(lang: str, key: str, **kwargs) -> str:
-    loc = SERVER_TEXT.get(lang, SERVER_TEXT["en"])
-    tmpl = loc.get(key, SERVER_TEXT["en"].get(key, key))
-    return tmpl.format(**kwargs) if kwargs else tmpl
 
 def clean_for_json(obj):
     if isinstance(obj, dict):
@@ -180,7 +118,7 @@ class GameSession:
     def __init__(self, username: str):
         self.username = username
         self.profile = UserProfileManager.get_or_create(username)
-        self.lang = self.profile.get("lang", "en")
+        self.lang = normalize_lang(self.profile.get("lang", "en"))
         self.env = MicroRTSEnv(mode="manual_p2", record_telemetry=True, lang=self.lang)
         self.base_rating = float(self.profile.get("base_rating", 35.00))
         self.active_rating = self.base_rating
@@ -191,7 +129,7 @@ class GameSession:
         self.is_training_new_gen = False
 
     def set_language(self, lang: str):
-        self.lang = lang if lang in ("en", "uk") else "en"
+        self.lang = normalize_lang(lang)
         self.env.set_language(self.lang)
         self.profile["lang"] = self.lang
         UserProfileManager.update_profile(self.username, self.profile)
@@ -205,8 +143,8 @@ class GameSession:
         valid_moves = []
         valid_attacks = []
         inspector = {
-            "title": srv_txt(self.lang, "nothing_selected"),
-            "lines": [srv_txt(self.lang, "click_prompt")],
+            "title": get_text(self.lang, "nothing_selected"),
+            "lines": [get_text(self.lang, "click_prompt")],
             "can_heal": False,
             "can_harvest": False,
             "can_build_tower": False,
@@ -223,23 +161,23 @@ class GameSession:
             base_v = float(self.env.tile_yields[sr, sc])
             eff_v = float(self.env.get_effective_tile_yield(sr, sc))
             owner_key = {0: "owner_neutral", 1: "owner_ai", 2: "owner_player"}[int(self.env.territory[sr, sc])]
-            owner_str = srv_txt(self.lang, owner_key)
+            owner_str = get_text(self.lang, owner_key)
             lines = []
             if self.env.is_tile_built_up(sr, sc):
-                lines.append(srv_txt(self.lang, "land_built", base=base_v, owner=owner_str))
+                lines.append(get_text(self.lang, "land_built", base=base_v, owner=owner_str))
             else:
-                lines.append(srv_txt(self.lang, "land_free", eff=eff_v, owner=owner_str))
+                lines.append(get_text(self.lang, "land_free", eff=eff_v, owner=owner_str))
 
             if (sr, sc) in self.env.units:
                 u = self.env.units[(sr, sc)]
                 st = UNIT_STATS[u['type']]
                 u_name = get_unit_name(u['type'], self.lang)
-                f_str = srv_txt(self.lang, "owner_player") if int(u['faction']) == 2 else srv_txt(self.lang, "owner_ai")
-                r_str = srv_txt(self.lang, "status_ready") if bool(u['ready']) else srv_txt(self.lang, "status_moved")
-                lines.append(srv_txt(self.lang, "unit_header", name=u_name, faction=f_str, status=r_str))
-                lines.append(srv_txt(self.lang, "hp_line", hp=u['hp'], max_hp=u['max_hp'], pct=(u['hp'] / u['max_hp']) * 100.00))
-                lines.append(srv_txt(self.lang, "stats_line", move=st['move_range'], atk=st['atk_range'], dmg=st['dmg']))
-                lines.append(srv_txt(self.lang, "upkeep_line", upk=st['upkeep'], eff=u['efficiency']))
+                f_str = get_text(self.lang, "owner_player") if int(u['faction']) == 2 else get_text(self.lang, "owner_ai")
+                r_str = get_text(self.lang, "status_ready") if bool(u['ready']) else get_text(self.lang, "status_moved")
+                lines.append(get_text(self.lang, "unit_header", name=u_name, faction=f_str, status=r_str))
+                lines.append(get_text(self.lang, "hp_line", hp=u['hp'], max_hp=u['max_hp'], pct=(u['hp'] / u['max_hp']) * 100.00))
+                lines.append(get_text(self.lang, "stats_line", move=st['move_range'], atk=st['atk_range'], dmg=st['dmg']))
+                lines.append(get_text(self.lang, "upkeep_line", upk=st['upkeep'], eff=u['efficiency']))
                 if int(u['faction']) == 2:
                     inspector["can_disband"] = True
                     if bool(u['ready']):
@@ -263,21 +201,21 @@ class GameSession:
                 valid_attacks = [[int(p[0]), int(p[1])] for p in self.env.get_valid_attack_targets((sr, sc), faction=2, atk_range=2)]
 
             if (sr, sc) == self.env.p2_castle_pos:
-                lines.append(srv_txt(self.lang, "your_castle", hp=self.env.p2_castle_hp, max_hp=CASTLE_MAX_HP))
+                lines.append(get_text(self.lang, "your_castle", hp=self.env.p2_castle_hp, max_hp=CASTLE_MAX_HP))
                 if (sr, sc) not in self.env.units:
                     inspector["can_spawn_worker"] = bool(float(self.env.p2_gold) >= UNIT_STATS['worker']['cost'])
                     inspector["can_spawn_warrior"] = bool(float(self.env.p2_gold) >= UNIT_STATS['warrior']['cost'])
                     inspector["can_spawn_archer"] = bool(float(self.env.p2_gold) >= UNIT_STATS['archer']['cost'])
                 else:
-                    lines.append(srv_txt(self.lang, "castle_occupied"))
+                    lines.append(get_text(self.lang, "castle_occupied"))
             elif (sr, sc) == self.env.p1_castle_pos:
-                lines.append(srv_txt(self.lang, "ai_castle", hp=self.env.p1_castle_hp, max_hp=CASTLE_MAX_HP))
+                lines.append(get_text(self.lang, "ai_castle", hp=self.env.p1_castle_hp, max_hp=CASTLE_MAX_HP))
             elif int(self.env.struct_type[sr, sc]) != 0:
                 st_t = int(self.env.struct_type[sr, sc])
                 st_own = int(self.env.struct_owner[sr, sc])
                 st_info = STRUCT_STATS[st_t]
                 st_name = get_struct_name(st_t, self.lang)
-                lines.append(srv_txt(self.lang, "struct_line", name=st_name, hp=float(self.env.struct_hp[sr, sc]), max_hp=st_info['max_hp']))
+                lines.append(get_text(self.lang, "struct_line", name=st_name, hp=float(self.env.struct_hp[sr, sc]), max_hp=st_info['max_hp']))
                 if st_t == 2 and st_own == 2 and (sr, sc) not in self.env.units:
                     inspector["can_spawn_worker"] = bool(float(self.env.p2_gold) >= UNIT_STATS['worker']['cost'])
                     inspector["can_spawn_warrior"] = bool(float(self.env.p2_gold) >= UNIT_STATS['warrior']['cost'])
@@ -317,6 +255,7 @@ class GameSession:
         raw_payload = {
             "username": str(self.username),
             "lang": str(self.lang),
+            "ui_text": get_ui_bundle(self.lang),
             "matches_played": int(self.profile.get("matches_played", 0)),
             "turn": int(self.env.turn_count),
             "max_turns": int(MAX_STEPS),
@@ -376,7 +315,7 @@ def api_init_user(request: Request):
 @app.post("/api/state")
 def api_get_state(req: ActionRequest):
     session = get_session(req.username)
-    if req.param in ("en", "uk"):
+    if req.param in ("en", "uk", "ua"):
         session.set_language(req.param)
     return session.serialize_state()
 
@@ -386,7 +325,7 @@ def api_perform_action(req: ActionRequest):
     env = session.env
     atype = req.action_type
 
-    if atype == "set_lang" and req.param in ("en", "uk"):
+    if atype == "set_lang" and req.param:
         session.set_language(req.param)
         return session.serialize_state()
 
@@ -406,9 +345,9 @@ def api_perform_action(req: ActionRequest):
                 dr, dc = clicked[0] - sr, clicked[1] - sc
                 if (-dr, -dc) in RELATIVE_OFFSETS:
                     env.record_entity_decision('unit', (sr, sc), 2, RELATIVE_OFFSETS.index((-dr, -dc)))
-                u_name = get_unit_name(env.units[(sr, sc)]['type'], session.lang)
+                u_type = env.units[(sr, sc)]['type']
                 if env.execute_unit_move((sr, sc), clicked):
-                    env.add_event_log(srv_txt(session.lang, "player_move", unit=u_name, r=clicked[0], c=clicked[1]))
+                    env.add_localized_event("player_move", u_type=u_type, r=clicked[0], c=clicked[1])
                     session.selected_pos = clicked
                 return session.serialize_state()
 
@@ -419,7 +358,7 @@ def api_perform_action(req: ActionRequest):
                     env.record_entity_decision('tower' if is_tower else 'unit', (sr, sc), 2, 12 + RELATIVE_OFFSETS.index((-dr, -dc)))
                 dmg = env.execute_attack_on_target((sr, sc), clicked, is_tower=is_tower)
                 if dmg > 0.00:
-                    env.add_event_log(srv_txt(session.lang, "player_attack", dmg=dmg, r=clicked[0], c=clicked[1]))
+                    env.add_localized_event("player_attack", dmg=dmg, r=clicked[0], c=clicked[1])
                     _check_and_handle_match_end(session)
                 return session.serialize_state()
 
@@ -429,31 +368,29 @@ def api_perform_action(req: ActionRequest):
         if env.units[session.selected_pos]['faction'] == 2:
             env.record_entity_decision('unit', session.selected_pos, 2, 24)
             gained = env.heal_unit_percentage(session.selected_pos)
-            env.add_event_log(srv_txt(session.lang, "player_heal", gained=gained))
+            env.add_localized_event("player_heal", gained=gained)
 
     elif atype == "harvest" and session.selected_pos in env.units:
         if env.units[session.selected_pos]['faction'] == 2:
             env.record_entity_decision('unit', session.selected_pos, 2, 25)
             bonus = env.execute_worker_harvest(session.selected_pos)
             if bonus > 0.00:
-                env.add_event_log(srv_txt(session.lang, "player_harvest", bonus=bonus))
+                env.add_localized_event("player_harvest", bonus=bonus)
 
     elif atype == "build" and session.selected_pos in env.units:
         if env.units[session.selected_pos]['faction'] == 2:
             b_type = 1 if req.param == "tower" else 2
             env.record_entity_decision('unit', session.selected_pos, 2, 26 if b_type == 1 else 27)
             if env.execute_worker_build(session.selected_pos, build_type=b_type):
-                b_name = get_struct_name(b_type, session.lang)
-                env.add_event_log(srv_txt(session.lang, "player_build", struct=b_name))
+                env.add_localized_event("player_build", st_type=b_type)
 
     elif atype == "disband" and session.selected_pos in env.units:
         if env.units[session.selected_pos]['faction'] == 2:
             u_type = env.units[session.selected_pos]['type']
-            u_name = get_unit_name(u_type, session.lang)
             env.record_entity_decision('unit', session.selected_pos, 2, 28)
             refund = env.execute_unit_disband(session.selected_pos)
             if refund > 0.00:
-                env.add_event_log(srv_txt(session.lang, "player_disband", unit=u_name, refund=refund))
+                env.add_localized_event("player_disband", u_type=u_type, refund=refund)
                 session.selected_pos = None
 
     elif atype == "demolish" and session.selected_pos in env.units:
@@ -461,15 +398,14 @@ def api_perform_action(req: ActionRequest):
             env.record_entity_decision('unit', session.selected_pos, 2, 29)
             refund, st_t = env.execute_worker_demolish(session.selected_pos)
             if refund > 0.00:
-                st_name = get_struct_name(st_t, session.lang)
-                env.add_event_log(srv_txt(session.lang, "player_demolish", struct=st_name, refund=refund))
+                env.add_localized_event("player_demolish", st_type=st_t, refund=refund)
 
     elif atype == "spawn" and session.selected_pos is not None:
         u_type = req.param or "warrior"
         act_map = {'worker': 27, 'warrior': 28, 'archer': 29}
         env.record_entity_decision('spawn', session.selected_pos, 2, act_map.get(u_type, 28))
         if env.execute_structure_spawn(session.selected_pos, faction=2, unit_type=u_type):
-            env.add_event_log(srv_txt(session.lang, "player_spawn", unit=get_unit_name(u_type, session.lang)))
+            env.add_localized_event("player_spawn", u_type=u_type)
 
     elif atype == "end_turn":
         env.heal_all_unmoved_units(faction=2)
@@ -502,7 +438,7 @@ def _check_and_handle_match_end(session: GameSession) -> bool:
     elif env.turn_count > MAX_STEPS:
         done = True
         inc1, _, _, t1, u1 = env.get_faction_economy_stats(1)
-        inc2, _, _, t2, u2 = env.get_faction_economy_stats(2)
+        inc2, _, _, t2, u2 = self.env.get_faction_economy_stats(2)
         s1 = env.p1_castle_hp + t1 * 0.25 + inc1 * 4.00 + u1 * 1.50
         s2 = env.p2_castle_hp + t2 * 0.25 + inc2 * 4.00 + u2 * 1.50
         winner = "p1" if s1 >= s2 else "p2"
@@ -544,20 +480,20 @@ def _check_and_handle_match_end(session: GameSession) -> bool:
     prof["base_rating"] = session.base_rating
     UserProfileManager.update_profile(session.username, prof)
 
-    winner_str = srv_txt(session.lang, "owner_player") if human_won else srv_txt(session.lang, "owner_ai")
+    winner_key = "owner_player" if human_won else "owner_ai"
     session.is_training_new_gen = True
     session.last_evolution_report = {
         "status": "training",
-        "winner": winner_str,
+        "winner_key": winner_key,
         "samples": int(saved_cnt)
     }
 
-    def _bg_evolve(obs_c, acts_c, w_c, uname, w_str):
+    def _bg_evolve(obs_c, acts_c, w_c, uname, w_key):
         try:
             new_entry = OnlineEvolutionEngine.evolve_and_benchmark_from_match(obs_c, acts_c, w_c, username=uname)
             session.last_evolution_report = {
                 "status": "completed",
-                "winner": w_str,
+                "winner_key": w_key,
                 "new_gen_label": str(new_entry["label"]),
                 "new_gen_rating": float(new_entry["rating"]),
                 "gauntlet_winrate": float(new_entry["w_gauntlet"]),
@@ -568,7 +504,7 @@ def _check_and_handle_match_end(session: GameSession) -> bool:
             session.is_training_new_gen = False
             session.env.set_dda_generation(session.active_rating)
 
-    threading.Thread(target=_bg_evolve, args=(m_obs, m_acts, m_weights, session.username, winner_str), daemon=True).start()
+    threading.Thread(target=_bg_evolve, args=(m_obs, m_acts, m_weights, session.username, winner_key), daemon=True).start()
 
     env.set_dda_generation(session.active_rating)
     env.reset()
