@@ -6,7 +6,9 @@ body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     display: flex;
     height: 100vh;
+    height: 100dvh;
     overflow: hidden;
+    overscroll-behavior: none;
 }
 
 #auth-screen {
@@ -20,16 +22,20 @@ body {
     justify-content: center;
     align-items: center;
     z-index: 1000;
+    padding: 12px;
+    box-sizing: border-box;
 }
 
 .auth-card {
     background: #182026;
     border: 2px solid #3c6382;
     border-radius: 8px;
-    padding: 30px;
-    width: 420px;
+    padding: 26px;
+    width: 100%;
+    max-width: 420px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
     text-align: center;
+    box-sizing: border-box;
 }
 
 .auth-card h2 {
@@ -98,6 +104,14 @@ body {
     justify-content: center;
     align-items: center;
     position: relative;
+    overflow: hidden;
+}
+
+#board {
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    display: block;
 }
 
 #right-pane {
@@ -109,6 +123,7 @@ body {
     padding: 10px 12px;
     box-sizing: border-box;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .box {
@@ -132,6 +147,7 @@ body {
     display: flex;
     gap: 6px;
     align-items: center;
+    flex-wrap: wrap;
 }
 
 .profile-bar button {
@@ -205,10 +221,16 @@ body {
     margin-top: 5px;
 }
 
+.orders-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
 .btn-act {
     width: 100%;
     padding: 6px 8px;
-    margin: 2px 0;
+    margin: 1px 0;
     background: #2e86de;
     color: #fff;
     border: none;
@@ -233,6 +255,7 @@ body {
     color: #182026 !important;
     font-size: 12.5px;
     margin-top: 4px;
+    padding: 9px !important;
 }
 
 .btn-stats {
@@ -257,6 +280,8 @@ body {
     justify-content: center;
     align-items: center;
     z-index: 2000;
+    padding: 10px;
+    box-sizing: border-box;
 }
 
 #modal-card,
@@ -264,9 +289,10 @@ body {
     background: #182026;
     border: 2px solid #9b59b6;
     border-radius: 8px;
-    padding: 18px 22px;
-    width: 820px;
-    max-height: 88vh;
+    padding: 16px 20px;
+    width: 100%;
+    max-width: 820px;
+    max-height: 90vh;
     overflow-y: auto;
     box-sizing: border-box;
 }
@@ -291,8 +317,10 @@ body {
 .guide-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 12px;
+    font-size: 11.5px;
     margin-bottom: 10px;
+    display: block;
+    overflow-x: auto;
 }
 
 .guide-table th,
@@ -319,7 +347,7 @@ body {
 }
 
 .modal-title {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: bold;
     color: #feca57;
 }
@@ -349,6 +377,7 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 8px;
 }
 
 .room-info h4 {
@@ -373,4 +402,48 @@ body {
     padding: 6px 10px;
     margin-bottom: 4px;
     font-size: 12px;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+    #app-container {
+        flex-direction: column;
+    }
+
+    #left-pane {
+        width: 100%;
+        height: 50vh;
+        height: 50dvh;
+        flex: none;
+    }
+
+    #right-pane {
+        width: 100%;
+        height: 50vh;
+        height: 50dvh;
+        border-left: none;
+        border-top: 2px solid #3c6382;
+        padding: 8px 10px;
+    }
+
+    .orders-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 5px;
+    }
+
+    .orders-full-span {
+        grid-column: span 2;
+    }
+
+    .btn-act {
+        padding: 8px 6px;
+        font-size: 11px;
+    }
+
+    #telemetry-text,
+    #inspector-text {
+        font-size: 11px;
+    }
 }

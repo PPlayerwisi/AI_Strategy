@@ -2,8 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <title id="page-title">Faction Warfare RTS</title>
-    <link rel="stylesheet" href="/static/style.css?v=5" />
+    <link rel="stylesheet" href="/static/style.css?v=6" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body>
@@ -207,75 +211,77 @@
             <div id="lbl-box-orders" class="box-title">
               ORDERS & CONSTRUCTION
             </div>
-            <button
-              id="b-heal"
-              class="btn-act"
-              style="background: #10ac84"
-              onclick="sendAct('heal')"
-            >
-              Heal
-            </button>
-            <button
-              id="b-harv"
-              class="btn-act"
-              style="background: #d35400"
-              onclick="sendAct('harvest')"
-            >
-              Harvest
-            </button>
-            <button
-              id="b-tow"
-              class="btn-act"
-              style="background: #576574"
-              onclick="sendAct('build', null, null, 'tower')"
-            >
-              Tower
-            </button>
-            <button
-              id="b-bar"
-              class="btn-act"
-              style="background: #576574"
-              onclick="sendAct('build', null, null, 'barracks')"
-            >
-              Barracks
-            </button>
-            <button
-              id="b-dem"
-              class="btn-act"
-              style="background: #8e44ad"
-              onclick="sendAct('demolish')"
-            >
-              Demolish
-            </button>
-            <button
-              id="b-dis"
-              class="btn-act"
-              style="background: #c0392b"
-              onclick="sendAct('disband')"
-            >
-              Disband
-            </button>
-            <button
-              id="b-swk"
-              class="btn-act"
-              onclick="sendAct('spawn', null, null, 'worker')"
-            >
-              +Worker
-            </button>
-            <button
-              id="b-swr"
-              class="btn-act"
-              onclick="sendAct('spawn', null, null, 'warrior')"
-            >
-              +Warrior
-            </button>
-            <button
-              id="b-sar"
-              class="btn-act"
-              onclick="sendAct('spawn', null, null, 'archer')"
-            >
-              +Archer
-            </button>
+            <div class="orders-grid">
+              <button
+                id="b-heal"
+                class="btn-act"
+                style="background: #10ac84"
+                onclick="sendAct('heal')"
+              >
+                Heal
+              </button>
+              <button
+                id="b-harv"
+                class="btn-act"
+                style="background: #d35400"
+                onclick="sendAct('harvest')"
+              >
+                Harvest
+              </button>
+              <button
+                id="b-tow"
+                class="btn-act"
+                style="background: #576574"
+                onclick="sendAct('build', null, null, 'tower')"
+              >
+                Tower
+              </button>
+              <button
+                id="b-bar"
+                class="btn-act"
+                style="background: #576574"
+                onclick="sendAct('build', null, null, 'barracks')"
+              >
+                Barracks
+              </button>
+              <button
+                id="b-dem"
+                class="btn-act"
+                style="background: #8e44ad"
+                onclick="sendAct('demolish')"
+              >
+                Demolish
+              </button>
+              <button
+                id="b-dis"
+                class="btn-act"
+                style="background: #c0392b"
+                onclick="sendAct('disband')"
+              >
+                Disband
+              </button>
+              <button
+                id="b-swk"
+                class="btn-act"
+                onclick="sendAct('spawn', null, null, 'worker')"
+              >
+                +Worker
+              </button>
+              <button
+                id="b-swr"
+                class="btn-act"
+                onclick="sendAct('spawn', null, null, 'warrior')"
+              >
+                +Warrior
+              </button>
+              <button
+                id="b-sar"
+                class="btn-act orders-full-span"
+                onclick="sendAct('spawn', null, null, 'archer')"
+              >
+                +Archer
+              </button>
+            </div>
           </div>
 
           <button
@@ -356,6 +362,6 @@
       </div>
     </div>
 
-    <script src="/static/game.js?v=5"></script>
+    <script src="/static/game.js?v=6"></script>
   </body>
 </html>

@@ -4,6 +4,10 @@ let state = null;
 let cellSize = 34.0;
 let camX = 24.0, camY = 24.0;
 let isPanning = false, panMoved = false, panStartX = 0, panStartY = 0;
+let touchMode = null;
+let touchMoved = false;
+let touchStartX = 0, touchStartY = 0;
+let pinchLastDist = 0;
 let chartInstance = null;
 
 const canvas = document.getElementById("board");
@@ -12,6 +16,19 @@ const ctx = canvas.getContext("2d");
 function getCanvasCoords(e) {
   const rect = canvas.getBoundingClientRect();
   return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+function getTouchCanvasCoords(touch) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+}
+
+function isTileInList(r, c, list) {
+  if (!list) return false;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i][0] === r && list[i][1] === c) return true;
+  }
+  return false;
 }
 
 function clampCamera() {
@@ -24,6 +41,29 @@ function clampCamera() {
   const maxY = margin;
   camY = minY > maxY ? (canvas.height - boardPx) / 2.0 : Math.max(minY, Math.min(maxY, camY));
 }
+
+function resizeCanvas() {
+  const pane = document.getElementById("left-pane");
+  if (!pane) return;
+  const rect = pane.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+
+  if (window.innerWidth <= 900) {
+    canvas.width = Math.floor(rect.width);
+    canvas.height = Math.floor(rect.height);
+    if (cellSize > 28.0 && state && state.turn <= 1) {
+      cellSize = Math.max(18.0, Math.floor(Math.min(canvas.width, canvas.height) / 19.5));
+    }
+  } else {
+    const sz = Math.min(700, Math.floor(rect.width - 12), Math.floor(rect.height - 12));
+    canvas.width = Math.max(320, sz);
+    canvas.height = Math.max(320, sz);
+  }
+  clampCamera();
+  drawBoard();
+}
+
+window.addEventListener("resize", resizeCanvas);
 
 canvas.addEventListener("contextmenu", e => e.preventDefault());
 
@@ -78,13 +118,86 @@ canvas.addEventListener("wheel", e => {
   const pos = getCanvasCoords(e);
   const factor = e.deltaY < 0 ? 1.12 : 0.89;
   const oldSize = cellSize;
-  cellSize = Math.max(22.0, Math.min(92.0, cellSize * factor));
+  cellSize = Math.max(18.0, Math.min(92.0, cellSize * factor));
   const ratio = cellSize / oldSize;
   camX = pos.x - (pos.x - camX) * ratio;
   camY = pos.y - (pos.y - camY) * ratio;
   clampCamera();
   drawBoard();
-});
+}, { passive: false });
+
+canvas.addEventListener("touchstart", e => {
+  e.preventDefault();
+  if (e.touches.length === 1) {
+    const pos = getTouchCanvasCoords(e.touches[0]);
+    touchMode = "single";
+    touchMoved = false;
+    touchStartX = pos.x;
+    touchStartY = pos.y;
+  } else if (e.touches.length === 2) {
+    touchMode = "pinch";
+    touchMoved = true;
+    const p1 = getTouchCanvasCoords(e.touches[0]);
+    const p2 = getTouchCanvasCoords(e.touches[1]);
+    pinchLastDist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+  }
+}, { passive: false });
+
+canvas.addEventListener("touchmove", e => {
+  e.preventDefault();
+  if (touchMode === "single" && e.touches.length === 1) {
+    const pos = getTouchCanvasCoords(e.touches[0]);
+    const dx = pos.x - touchStartX;
+    const dy = pos.y - touchStartY;
+    if (Math.hypot(dx, dy) > 6) {
+      touchMoved = true;
+    }
+    if (touchMoved) {
+      camX += dx;
+      camY += dy;
+      touchStartX = pos.x;
+      touchStartY = pos.y;
+      clampCamera();
+      drawBoard();
+    }
+  } else if (touchMode === "pinch" && e.touches.length === 2) {
+    const p1 = getTouchCanvasCoords(e.touches[0]);
+    const p2 = getTouchCanvasCoords(e.touches[1]);
+    const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    if (pinchLastDist > 10 && dist > 10) {
+      const midX = (p1.x + p2.x) / 2.0;
+      const midY = (p1.y + p2.y) / 2.0;
+      const factor = dist / pinchLastDist;
+      const oldSize = cellSize;
+      cellSize = Math.max(18.0, Math.min(92.0, cellSize * factor));
+      const ratio = cellSize / oldSize;
+      camX = midX - (midX - camX) * ratio;
+      camY = midY - (midY - camY) * ratio;
+      clampCamera();
+      drawBoard();
+    }
+    pinchLastDist = dist;
+  }
+}, { passive: false });
+
+canvas.addEventListener("touchend", e => {
+  e.preventDefault();
+  if (touchMode === "single" && !touchMoved && e.changedTouches.length > 0) {
+    const pos = getTouchCanvasCoords(e.changedTouches[0]);
+    const c = Math.floor((pos.x - camX) / cellSize);
+    const r = Math.floor((pos.y - camY) / cellSize);
+    if (r >= 0 && r < 18 && c >= 0 && c < 18) {
+      if (state && (isTileInList(r, c, state.valid_moves) || isTileInList(r, c, state.valid_attacks))) {
+        sendAct("order_tile", r, c);
+      } else {
+        sendAct("select_tile", r, c);
+      }
+    }
+  }
+  if (e.touches.length === 0) {
+    touchMode = null;
+  }
+}, { passive: false });
 
 window.addEventListener("beforeunload", () => {
   if (currentUser) {
@@ -186,6 +299,7 @@ async function submitAuth(mode) {
     document.getElementById("auth-screen").style.display = "none";
     document.getElementById("app-container").style.display = "flex";
     state = data.state;
+    resizeCanvas();
     updateUI();
   } catch (err) {
     errEl.textContent = "Network error";
@@ -236,6 +350,7 @@ async function roomAction(action, extra = {}) {
       return;
     }
     state = data.state;
+    resizeCanvas();
     updateUI();
   } catch (err) {
     console.error("Room action error:", err);
@@ -326,7 +441,7 @@ function updateUI() {
             <h4>${rm.name} (${rm.max_players}P) ${rm.is_private ? '🔒' : ''}</h4>
             <p>${t.playersCount}: ${rm.filled_slots}/${rm.max_players} | ${t.hostLabel}: ${rm.host} | ${stText}</p>
           </div>
-          <button class="auth-btn" style="padding: 6px 14px; font-size: 11px;" onclick="joinRoom('${rm.room_id}', ${rm.is_private})">${t.btnJoin}</button>
+          <button class="auth-btn" style="padding: 6px 14px; font-size: 11px; flex: none;" onclick="joinRoom('${rm.room_id}', ${rm.is_private})">${t.btnJoin}</button>
         `;
         listCont.appendChild(card);
       }
@@ -538,7 +653,7 @@ function drawBoard() {
         ctx.fill();
       } else {
         const val = state.eff_yields[r][c];
-        if (val > 0 && cs >= 30) {
+        if (val > 0 && cs >= 26) {
           ctx.fillStyle = val >= 0.30 ? "#feca57" : (val >= 0.12 ? "#1dd1a1" : "#8395a7");
           ctx.font = `bold ${Math.max(8, Math.floor(cs * 0.20))}px Arial`;
           ctx.fillText(val.toFixed(2), x + 3, y + cs * 0.26);
@@ -554,7 +669,7 @@ function drawBoard() {
     ctx.strokeStyle = "#feca57";
     ctx.strokeRect(x + cs * 0.14, y + cs * 0.22, cs * 0.72, cs * 0.66);
     ctx.fillStyle = "#fff";
-    ctx.font = `bold ${Math.max(8, Math.floor(cs * 0.19))}px Arial`;
+    ctx.font = `bold ${Math.max(7, Math.floor(cs * 0.19))}px Arial`;
     ctx.fillText((st.type === 1 ? t.towerShort : t.barracksShort) + st.hp.toFixed(0), x + cs * 0.18, y + cs * 0.60);
   }
 
