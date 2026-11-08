@@ -767,7 +767,7 @@ class AIStrategistMixin:
         w_chosen = transform_action_for_faction(c_chosen, f)
         return int(w_chosen)
 
-    def execute_full_ai_turn(self, faction: int, model=None, deterministic: bool = False, clear_traces: bool = True):
+    def execute_full_ai_turn(self, faction: int, model=None, deterministic: bool = False, clear_traces: bool = True, collect_economy: bool = False):
         f = int(faction)
         if not self.is_faction_alive(f):
             return
@@ -778,7 +778,7 @@ class AIStrategistMixin:
             self.last_ai_turn_traces = []
 
         self._prevent_bankruptcy_by_disbanding(f)
-        self._prepare_faction_turn(faction=f, collect_economy=True)
+        self._prepare_faction_turn(faction=f, collect_economy=collect_economy)
         if not self.is_faction_alive(f):
             return
 
@@ -795,31 +795,42 @@ class AIStrategistMixin:
 
         self._assign_tactical_directives(f)
 
-        unit_positions = [pos for pos, u in sorted(self.units.items()) if u['faction'] == f and u['ready']]
-        for pos in unit_positions:
-            if pos not in self.units or not self.units[pos]['ready']:
-                continue
-            mask = self.get_valid_action_mask_for_entity('unit', pos, f)
-            u_type = self.units[pos]['type']
-            atk_indices = [a for a in range(12, 24) if mask[a]]
+        unit_ids = [u['id'] for _, u in sorted(self.units.items()) if u['faction'] == f and u['ready']]
+        for uid in unit_ids:
+            for _ in range(2):
+                curr_pos = None
+                for p, u_obj in self.units.items():
+                    if u_obj['id'] == uid and u_obj['faction'] == f and u_obj['ready']:
+                        curr_pos = p
+                        break
+                if curr_pos is None:
+                    break
 
-            if u_type != 'worker' and len(atk_indices) > 0:
-                act = self.get_strategic_teacher_action('unit', pos, f, tier=f_tier, precomputed_mask=mask)
-            elif u_type == 'worker' and self.turn_count > AI_BUILD_LOCK_TURNS and (mask[26] or mask[27]):
-                teacher_w_act = self.get_strategic_teacher_action('unit', pos, f, tier=f_tier, precomputed_mask=mask)
-                if teacher_w_act in (26, 27):
-                    act = teacher_w_act
+                mask = self.get_valid_action_mask_for_entity('unit', curr_pos, f)
+                if not np.any(mask[:24]) and not mask[25] and not mask[26] and not mask[27] and not mask[29]:
+                    break
+
+                u_type = self.units[curr_pos]['type']
+                atk_indices = [a for a in range(12, 24) if mask[a]]
+
+                if u_type != 'worker' and len(atk_indices) > 0:
+                    act = self.get_strategic_teacher_action('unit', curr_pos, f, tier=f_tier, precomputed_mask=mask)
+                elif u_type == 'worker' and self.turn_count > AI_BUILD_LOCK_TURNS and (mask[26] or mask[27]):
+                    teacher_w_act = self.get_strategic_teacher_action('unit', curr_pos, f, tier=f_tier, precomputed_mask=mask)
+                    if teacher_w_act in (26, 27):
+                        act = teacher_w_act
+                    elif active_model is not None:
+                        act = self._predict_faction_model_action(active_model, 'unit', curr_pos, f, mask, deterministic, temp)
+                    else:
+                        act = teacher_w_act
                 elif active_model is not None:
-                    act = self._predict_faction_model_action(active_model, 'unit', pos, f, mask, deterministic, temp)
+                    act = self._predict_faction_model_action(active_model, 'unit', curr_pos, f, mask, deterministic, temp)
+                    if act == 24 and (self.units[curr_pos]['hp'] >= self.units[curr_pos]['max_hp'] or u_type != 'worker') and np.any(mask[:24]):
+                        act = self.get_strategic_teacher_action('unit', curr_pos, f, tier=f_tier, precomputed_mask=mask)
                 else:
-                    act = teacher_w_act
-            elif active_model is not None:
-                act = self._predict_faction_model_action(active_model, 'unit', pos, f, mask, deterministic, temp)
-                if act == 24 and (self.units[pos]['hp'] >= self.units[pos]['max_hp'] or u_type != 'worker') and np.any(mask[:24]):
-                    act = self.get_strategic_teacher_action('unit', pos, f, tier=f_tier, precomputed_mask=mask)
-            else:
-                act = self.get_strategic_teacher_action('unit', pos, f, tier=f_tier, precomputed_mask=mask)
-            self.apply_entity_action('unit', pos, f, act, precomputed_mask=mask)
+                    act = self.get_strategic_teacher_action('unit', curr_pos, f, tier=f_tier, precomputed_mask=mask)
+
+                self.apply_entity_action('unit', curr_pos, f, act, precomputed_mask=mask)
 
         tower_coords = np.argwhere((self.struct_owner == f) & (self.struct_type == 1) & self.tower_ready)
         for tr, tc in tower_coords:

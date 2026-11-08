@@ -34,6 +34,7 @@ USERS_LOCK = threading.Lock()
 ROOMS_LOCK = threading.RLock()
 ROOMS = {}
 USER_ACTIVE_ROOM = {}
+DISCONNECT_TIMEOUT_SECONDS = 65.0
 
 FACTION_META = {
     1: {"key": "red", "name_en": "Red Empire (Bottom-Left)", "name_uk": "Червона Імперія (Лівий Низ)", "color": "#eb3b5a"},
@@ -282,11 +283,28 @@ class GameRoom:
         self.env: Optional[MicroRTSEnv] = None
         self.current_turn_faction = 2
         self.selected_by_user = {}
+        self.last_seen_by_user = {host: time.time()}
         self.active_ai_ratings = {}
         self.is_training_new_gen = False
         self.last_evolution_report = None
         self.winner_faction = None
         self.winner_name = None
+
+    def touch_user(self, username: str):
+        if username:
+            self.last_seen_by_user[username] = time.time()
+
+    def check_disconnected_players(self):
+        if self.status != "playing" or self.env is None:
+            return
+        now = time.time()
+        for f in list(self.active_factions):
+            s = self.slots.get(f, {})
+            if s.get("kind") == "human" and s.get("username") and self.env.is_faction_alive(f):
+                uname = s["username"]
+                last_t = self.last_seen_by_user.get(uname, now)
+                if (now - last_t) > DISCONNECT_TIMEOUT_SECONDS:
+                    self.surrender_faction(f, is_disconnect=True)
 
     def get_user_faction(self, username: str) -> Optional[int]:
         for f in self.active_factions:
@@ -313,6 +331,7 @@ class GameRoom:
         return hash_password(str(password or "").strip()) == self.password_hash
 
     def add_human_player(self, username: str, preferred_faction: int = None) -> tuple:
+        self.touch_user(username)
         existing_f = self.get_user_faction(username)
         if existing_f is not None:
             return True, existing_f
@@ -399,6 +418,7 @@ class GameRoom:
         self.winner_faction = None
         self.winner_name = None
 
+        now = time.time()
         for f in self.active_factions:
             s = self.slots[f]
             if s["kind"] == "ai":
@@ -410,7 +430,9 @@ class GameRoom:
                 self.active_ai_ratings[f] = r_val
             else:
                 self.env.ai_controlled_factions.discard(f)
-                u_prof = UserProfileManager.get_or_create(s["username"])
+                uname = s["username"]
+                self.last_seen_by_user[uname] = now
+                u_prof = UserProfileManager.get_or_create(uname)
                 u_r = float(u_prof.get("base_rating", 35.00))
                 comp = float(np.clip(0.30 + (u_r / 100.00) * 0.75, 0.25, 1.35))
                 self.env.set_faction_competence(f, comp)
@@ -425,6 +447,42 @@ class GameRoom:
     def _get_turn_order(self) -> list:
         return [2, 1, 3, 4] if self.max_players == 4 else [2, 1]
 
+    def surrender_faction(self, faction: int, is_disconnect: bool = False):
+        if self.status != "playing" or self.env is None:
+            return
+        f = int(faction)
+        if not self.env.is_faction_alive(f):
+            return
+
+        uname = self.slots.get(f, {}).get("username") or f"Faction {f}"
+        self.env._eliminate_faction(f)
+        event_key = "player_disconnected_surrender" if is_disconnect else "player_surrendered"
+        self.env.add_localized_event(event_key, player=uname, faction=f)
+
+        winner_f = self.env.get_match_winner()
+        if winner_f is not None:
+            self._finalize_match(winner_f)
+            return
+
+        alive_humans = [
+            af for af in self.active_factions
+            if self.slots[af]["kind"] == "human" and self.env.is_faction_alive(af)
+        ]
+        if len(alive_humans) == 0:
+            alive_any = self.env.get_alive_factions()
+            if alive_any:
+                self._finalize_match(alive_any[0])
+            return
+
+        if self.current_turn_faction == f:
+            order = self._get_turn_order()
+            self._step_to_next_faction(order)
+            winner_f = self.env.get_match_winner()
+            if winner_f is not None:
+                self._finalize_match(winner_f)
+                return
+            self._advance_ai_turns_if_needed()
+
     def _advance_ai_turns_if_needed(self):
         if self.status != "playing" or self.env is None:
             return
@@ -433,7 +491,7 @@ class GameRoom:
         safety_steps = 0
         cleared_traces_this_chain = False
 
-        while self.status == "playing" and safety_steps < 16:
+        while self.status == "playing" and safety_steps < 20:
             safety_steps += 1
             winner_f = self.env.get_match_winner()
             if winner_f is not None:
@@ -454,7 +512,8 @@ class GameRoom:
                 faction=curr_f,
                 model=f_model,
                 deterministic=False,
-                clear_traces=(not cleared_traces_this_chain)
+                clear_traces=(not cleared_traces_this_chain),
+                collect_economy=False
             )
             cleared_traces_this_chain = True
 
@@ -466,20 +525,28 @@ class GameRoom:
             self._step_to_next_faction(order)
 
     def _step_to_next_faction(self, order: list):
-        idx = order.index(self.current_turn_faction)
-        next_idx = (idx + 1) % len(order)
-        wrapped_round = (next_idx == 0)
-        self.current_turn_faction = order[next_idx]
+        if self.env is None:
+            return
+        idx = order.index(self.current_turn_faction) if self.current_turn_faction in order else 0
+        wrapped_round = False
+
+        for _ in range(len(order)):
+            idx = (idx + 1) % len(order)
+            if idx == 0:
+                wrapped_round = True
+            cand_f = order[idx]
+            if self.env.is_faction_alive(cand_f):
+                self.current_turn_faction = cand_f
+                break
 
         if wrapped_round:
             self.env.turn_count += 1
+            self.env.collect_global_round_economy()
             self._apply_in_match_dda_Adjustments()
             self.env.record_turn_efficiency_snapshot()
 
         if self.env.is_faction_alive(self.current_turn_faction):
-            next_slot = self.slots.get(self.current_turn_faction, {})
-            if next_slot.get("kind") == "human":
-                self.env._prepare_faction_turn(faction=self.current_turn_faction, collect_economy=True)
+            self.env._prepare_faction_turn(faction=self.current_turn_faction, collect_economy=False)
 
     def _apply_in_match_dda_Adjustments(self):
         if self.env is None:
@@ -640,6 +707,9 @@ class GameRoom:
         }
 
     def serialize_for_user(self, username: str, lang: str = "en") -> dict:
+        self.touch_user(username)
+        self.check_disconnected_players()
+
         norm_l = normalize_lang(lang)
         user_prof = UserProfileManager.get_or_create(username, norm_l)
         my_faction = self.get_user_faction(username)
@@ -656,6 +726,7 @@ class GameRoom:
             "pool_size": len(PoolRegistry.get_all_generations()),
             "pool_max_rating": round(float(PoolRegistry.get_max_rating()), 2),
             "room": self.serialize_summary(),
+            "num_players": self.max_players,
             "my_faction": my_faction,
             "is_host": (username == self.host),
             "can_start": (username == self.host and self.is_full() and self.status in ("waiting", "finished")),
@@ -699,7 +770,8 @@ class GameRoom:
                 "castle_pos": list(env.castle_positions[f])
             }
 
-        is_my_turn = (self.status == "playing" and my_faction is not None and self.current_turn_faction == my_faction)
+        my_alive = bool(my_faction is not None and env.is_faction_alive(my_faction))
+        is_my_turn = (self.status == "playing" and my_alive and self.current_turn_faction == my_faction)
         sel_pos = self.selected_by_user.get(username)
         my_workers_cnt = sum(1 for u in env.units.values() if u['faction'] == my_faction and u['type'] == 'worker') if my_faction is not None else 0
 
@@ -716,7 +788,9 @@ class GameRoom:
             "can_demolish": False,
             "can_spawn_worker": False,
             "can_spawn_warrior": False,
-            "can_spawn_archer": False
+            "can_spawn_archer": False,
+            "disband_refund_val": 0.00,
+            "demolish_refund_val": 0.00
         }
 
         if sel_pos is not None:
@@ -744,19 +818,38 @@ class GameRoom:
                 st = UNIT_STATS[u['type']]
                 u_name = get_unit_name(u['type'], norm_l)
                 f_str = f"{get_faction_display_name(uf, norm_l)} [{self.slots.get(uf, {}).get('username', '')}]"
-                r_str = get_text(norm_l, "status_ready") if bool(u['ready']) else get_text(norm_l, "status_moved")
+
+                has_m = not u.get('moved', False)
+                has_a = not u.get('attacked', False)
+                if bool(u['ready']):
+                    if has_m and has_a:
+                        r_str = get_text(norm_l, "status_ready")
+                    elif not has_m and has_a:
+                        r_str = get_text(norm_l, "status_can_attack")
+                    else:
+                        r_str = get_text(norm_l, "status_ready")
+                else:
+                    r_str = get_text(norm_l, "status_moved")
+
+                u_refund = round(float(st['cost']) * DISBAND_REFUND_RATIO, 2)
+                u_refund_pct = round(DISBAND_REFUND_RATIO * 100.00, 2)
+                inspector["disband_refund_val"] = u_refund
+
                 lines.append(get_text(norm_l, "unit_header", name=u_name, faction=f_str, status=r_str))
                 lines.append(get_text(norm_l, "hp_line", hp=u['hp'], max_hp=u['max_hp'], pct=(u['hp'] / u['max_hp']) * 100.00))
                 lines.append(get_text(norm_l, "stats_line", move=st['move_range'], atk=st['atk_range'], dmg=st['dmg']))
                 lines.append(get_text(norm_l, "upkeep_line", upk=st['upkeep'], eff=u['efficiency']))
+                lines.append(get_text(norm_l, "unit_refund_line", refund=u_refund, cost=st['cost'], pct=u_refund_pct))
 
                 if is_my_turn and uf == my_faction:
                     inspector["can_disband"] = True
                     if bool(u['ready']):
-                        valid_moves = [[int(p[0]), int(p[1])] for p in env.get_valid_moves_for_unit((sr, sc))]
-                        valid_attacks = [[int(p[0]), int(p[1])] for p in env.get_valid_attack_targets((sr, sc))]
-                        inspector["can_heal"] = True
-                        if u['type'] == 'worker':
+                        if has_m:
+                            valid_moves = [[int(p[0]), int(p[1])] for p in env.get_valid_moves_for_unit((sr, sc))]
+                        if has_a:
+                            valid_attacks = [[int(p[0]), int(p[1])] for p in env.get_valid_attack_targets((sr, sc))]
+                        inspector["can_heal"] = bool(has_m and has_a)
+                        if u['type'] == 'worker' and has_a:
                             my_gold = env.get_faction_gold(my_faction)
                             inspector["can_harvest"] = bool(eff_v > 0.00)
                             inspector["can_build_tower"] = bool(
@@ -767,9 +860,11 @@ class GameRoom:
                                 my_gold >= STRUCT_STATS[2]['cost']
                                 and env._find_barracks_build_site((sr, sc), my_faction, enforce_ai_distance=False) is not None
                             )
-                            inspector["can_demolish"] = bool(
-                                env._find_demolishable_structure_site((sr, sc), my_faction) is not None
-                            )
+                            dem_site = env._find_demolishable_structure_site((sr, sc), my_faction)
+                            if dem_site is not None:
+                                inspector["can_demolish"] = True
+                                dem_t = int(env.struct_type[dem_site[0], dem_site[1]])
+                                inspector["demolish_refund_val"] = round(float(STRUCT_STATS[dem_t]['cost']) * DEMOLISH_REFUND_RATIO, 2)
             elif is_my_turn and int(env.struct_owner[sr, sc]) == my_faction and int(env.struct_type[sr, sc]) == 1 and bool(env.tower_ready[sr, sc]):
                 valid_attacks = [[int(p[0]), int(p[1])] for p in env.get_valid_attack_targets((sr, sc), faction=my_faction, atk_range=2)]
 
@@ -795,7 +890,10 @@ class GameRoom:
                     st_own = int(env.struct_owner[sr, sc])
                     st_info = STRUCT_STATS[st_t]
                     st_name = get_struct_name(st_t, norm_l)
+                    s_refund = round(float(st_info['cost']) * DEMOLISH_REFUND_RATIO, 2)
+                    s_refund_pct = round(DEMOLISH_REFUND_RATIO * 100.00, 2)
                     lines.append(get_text(norm_l, "struct_line", name=st_name, hp=float(env.struct_hp[sr, sc]), max_hp=st_info['max_hp']))
+                    lines.append(get_text(norm_l, "struct_refund_line", refund=s_refund, cost=st_info['cost'], pct=s_refund_pct))
                     if is_my_turn and st_t == 2 and st_own == my_faction and (sr, sc) not in env.units:
                         my_gold = env.get_faction_gold(my_faction)
                         inspector["can_spawn_worker"] = bool(my_gold >= UNIT_STATS['worker']['cost'] and my_workers_cnt < MAX_WORKERS_PER_FACTION)
@@ -814,6 +912,8 @@ class GameRoom:
                 "hp": round(float(u['hp']), 2),
                 "max_hp": round(float(u['max_hp']), 2),
                 "ready": bool(u['ready']),
+                "moved": bool(u.get('moved', False)),
+                "attacked": bool(u.get('attacked', False)),
                 "efficiency": round(float(u.get('efficiency', 0.00)), 2)
             })
 
@@ -856,6 +956,7 @@ class GameRoom:
             "current_turn_faction": int(self.current_turn_faction),
             "current_turn_user": str(turn_owner_name),
             "is_my_turn": bool(is_my_turn),
+            "my_alive": bool(my_alive),
             "active_rating": float(primary_ai_r),
             "active_gen_label": str(primary_ai_lbl),
             "active_gen_origin": "multiplayer_room",
@@ -884,6 +985,8 @@ class RoomManager:
     @staticmethod
     def list_rooms() -> list:
         with ROOMS_LOCK:
+            for r in list(ROOMS.values()):
+                r.check_disconnected_players()
             return [r.serialize_summary() for r in sorted(ROOMS.values(), key=lambda x: x.created_at, reverse=True)]
 
     @staticmethod
@@ -898,7 +1001,7 @@ class RoomManager:
             return None
 
     @staticmethod
-    def leave_current_room(username: str):
+    def leave_current_room(username: str, is_disconnect: bool = False):
         with ROOMS_LOCK:
             room = RoomManager.get_user_room(username)
             USER_ACTIVE_ROOM.pop(username, None)
@@ -914,22 +1017,15 @@ class RoomManager:
                 elif room.host == username:
                     room.host = remaining_humans[0]
             elif room.status == "playing" and uf is not None and room.env is not None:
-                u_prof = UserProfileManager.get_or_create(username)
-                r_val = float(u_prof.get("base_rating", 35.00))
-                entry = room.env.set_faction_ai_rating(uf, r_val)
-                lbl = str(entry.get("label", f"Gen-{int(round(r_val))}"))
-                room.slots[uf] = {
-                    "faction": uf,
-                    "kind": "ai",
-                    "username": f"AI [{lbl}]",
-                    "ai_rating": r_val,
-                    "ai_label": lbl
-                }
-                room.active_ai_ratings[uf] = r_val
-                if room.human_count() == 0:
+                room.surrender_faction(uf, is_disconnect=is_disconnect)
+                remaining_alive_humans = [
+                    room.slots[f]["username"] for f in room.active_factions
+                    if room.slots[f]["kind"] == "human" and room.slots[f]["username"] != username and room.env.is_faction_alive(f)
+                ]
+                if not remaining_alive_humans and room.status == "finished":
                     ROOMS.pop(room.room_id, None)
-                elif room.current_turn_faction == uf:
-                    room._advance_ai_turns_if_needed()
+                elif room.host == username and remaining_alive_humans:
+                    room.host = remaining_alive_humans[0]
             elif room.status == "finished":
                 if uf is not None:
                     room.clear_slot(uf)
@@ -1006,7 +1102,14 @@ def _build_lobby_payload(username: str, lang: str = "en") -> dict:
         "base_rating": round(float(prof.get("base_rating", 35.00)), 2),
         "pool_size": len(PoolRegistry.get_all_generations()),
         "pool_max_rating": round(float(PoolRegistry.get_max_rating()), 2),
-        "rooms": RoomManager.list_rooms()
+        "rooms": RoomManager.list_rooms(),
+        "config": {
+            "unit_stats": UNIT_STATS,
+            "struct_stats": STRUCT_STATS,
+            "disband_ratio": DISBAND_REFUND_RATIO,
+            "demolish_ratio": DEMOLISH_REFUND_RATIO,
+            "min_training_eff": MIN_TRAINING_EFFICIENCY
+        }
     })
 
 @app.get("/api/init_user")
@@ -1041,6 +1144,17 @@ def api_auth(req: AuthRequest, request: Request):
     if not ok:
         return {"ok": False, "error": msg}
     return {"ok": True, "state": _build_lobby_payload(prof["username"], prof.get("lang", norm_l))}
+
+@app.post("/api/leave_beacon")
+async def api_leave_beacon(request: Request):
+    try:
+        body = await request.json()
+        uname = str(body.get("username", "")).strip()
+        if uname:
+            RoomManager.leave_current_room(uname, is_disconnect=True)
+    except Exception:
+        pass
+    return {"ok": True}
 
 @app.post("/api/rooms")
 def api_rooms_action(req: RoomActionRequest):
@@ -1098,7 +1212,7 @@ def api_rooms_action(req: RoomActionRequest):
             return {"ok": True, "state": room.serialize_for_user(uname, lang)}
 
         if act == "leave":
-            RoomManager.leave_current_room(uname)
+            RoomManager.leave_current_room(uname, is_disconnect=False)
             return {"ok": True, "state": _build_lobby_payload(uname, lang)}
 
         room = RoomManager.get_user_room(uname)
@@ -1180,23 +1294,35 @@ def api_perform_action(req: ActionRequest):
         if room is None or room.env is None:
             return _build_lobby_payload(uname, lang)
 
+        room.touch_user(uname)
         env = room.env
         my_f = room.get_user_faction(uname)
         if my_f is None:
             return room.serialize_for_user(uname, lang)
 
-        is_my_turn = (room.status == "playing" and room.current_turn_faction == my_f)
+        if atype == "surrender":
+            room.surrender_faction(my_f, is_disconnect=False)
+            return room.serialize_for_user(uname, lang)
+
+        if atype == "select_tile" and req.r is not None and req.c is not None:
+            room.selected_by_user[uname] = (int(req.r), int(req.c))
+            return room.serialize_for_user(uname, lang)
+
+        is_my_turn = (room.status == "playing" and env.is_faction_alive(my_f) and room.current_turn_faction == my_f)
         sel_pos = room.selected_by_user.get(uname)
 
-        if atype == "click_tile" and req.r is not None and req.c is not None:
+        if atype in ("order_tile", "click_tile") and req.r is not None and req.c is not None:
             clicked = (int(req.r), int(req.c))
             if is_my_turn and sel_pos is not None:
                 valid_m = []
                 valid_a = []
                 sr, sc = int(sel_pos[0]), int(sel_pos[1])
                 if (sr, sc) in env.units and env.units[(sr, sc)]['faction'] == my_f and env.units[(sr, sc)]['ready']:
-                    valid_m = env.get_valid_moves_for_unit((sr, sc))
-                    valid_a = env.get_valid_attack_targets((sr, sc))
+                    u_sel = env.units[(sr, sc)]
+                    if not u_sel.get('moved', False):
+                        valid_m = env.get_valid_moves_for_unit((sr, sc))
+                    if not u_sel.get('attacked', False):
+                        valid_a = env.get_valid_attack_targets((sr, sc))
                 elif int(env.struct_owner[sr, sc]) == my_f and int(env.struct_type[sr, sc]) == 1 and bool(env.tower_ready[sr, sc]):
                     valid_a = env.get_valid_attack_targets((sr, sc), faction=my_f, atk_range=2)
 
@@ -1223,7 +1349,8 @@ def api_perform_action(req: ActionRequest):
                             room._finalize_match(winner_f)
                     return room.serialize_for_user(uname, lang)
 
-            room.selected_by_user[uname] = clicked
+            if atype == "click_tile":
+                room.selected_by_user[uname] = clicked
             return room.serialize_for_user(uname, lang)
 
         if not is_my_turn:
@@ -1233,7 +1360,8 @@ def api_perform_action(req: ActionRequest):
             if env.units[sel_pos]['faction'] == my_f:
                 env.record_entity_decision('unit', sel_pos, my_f, 24)
                 gained = env.heal_unit_percentage(sel_pos)
-                env.add_localized_event("player_heal", gained=gained)
+                if gained > 0.00:
+                    env.add_localized_event("player_heal", gained=gained)
 
         elif atype == "harvest" and sel_pos in env.units:
             if env.units[sel_pos]['faction'] == my_f:

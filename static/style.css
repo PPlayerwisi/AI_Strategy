@@ -101,12 +101,12 @@ body {
 }
 
 #right-pane {
-    width: 440px;
+    width: 460px;
     background: #182026;
     border-left: 2px solid #2f3640;
     display: flex;
     flex-direction: column;
-    padding: 12px;
+    padding: 10px 12px;
     box-sizing: border-box;
     overflow-y: auto;
 }
@@ -115,15 +115,15 @@ body {
     background: #222f3e;
     border: 1px solid #3c6382;
     border-radius: 6px;
-    padding: 10px;
-    margin-bottom: 10px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
 }
 
 .box-title {
     font-size: 11px;
     font-weight: bold;
     color: #feca57;
-    margin-bottom: 6px;
+    margin-bottom: 5px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
@@ -134,40 +134,64 @@ body {
     align-items: center;
 }
 
-.profile-bar input {
-    flex: 1;
-    padding: 6px;
-    background: #182026;
-    border: 1px solid #4b6584;
-    border-radius: 4px;
-    color: #fff;
-    font-size: 13px;
-}
-
 .profile-bar button {
-    padding: 6px 12px;
-    background: #0abde3;
-    color: #182026;
+    padding: 5px 10px;
     border: none;
     border-radius: 4px;
     font-weight: bold;
     cursor: pointer;
+    font-size: 11px;
+}
+
+.turn-banner {
+    padding: 8px 10px;
+    border-radius: 6px;
     font-size: 12px;
+    font-weight: bold;
+    text-align: center;
+    margin-bottom: 8px;
+    letter-spacing: 0.4px;
+    transition: all 0.25s ease;
+}
+
+.turn-my {
+    background: #2ecc71;
+    color: #11171c;
+    border: 2px solid #fff200;
+    box-shadow: 0 0 12px rgba(46, 204, 113, 0.75);
+}
+
+.turn-wait {
+    background: #d35400;
+    color: #ffffff;
+    border: 1px solid #f39c12;
+}
+
+.turn-dead {
+    background: #632227;
+    color: #feca57;
+    border: 1px solid #eb3b5a;
+}
+
+.turn-finished {
+    background: #8e44ad;
+    color: #ffffff;
+    border: 2px solid #feca57;
 }
 
 #telemetry-text,
 #inspector-text,
 #evo-banner {
     font-family: 'Consolas', monospace;
-    font-size: 12px;
+    font-size: 11.5px;
     white-space: pre-wrap;
     color: #c8d6e5;
-    line-height: 1.4;
+    line-height: 1.35;
 }
 
 #evo-banner {
     color: #ff9f43;
-    margin-top: 6px;
+    margin-top: 5px;
 }
 
 .gen-badge {
@@ -178,37 +202,37 @@ body {
     font-size: 11px;
     font-weight: bold;
     text-align: center;
-    margin-top: 6px;
+    margin-top: 5px;
 }
 
 .btn-act {
     width: 100%;
-    padding: 7px;
-    margin: 3px 0;
+    padding: 6px 8px;
+    margin: 2px 0;
     background: #2e86de;
     color: #fff;
     border: none;
     border-radius: 4px;
     font-weight: bold;
-    font-size: 12px;
+    font-size: 11.5px;
     cursor: pointer;
 }
 
 .btn-act:hover {
-    opacity: 0.9;
+    opacity: 0.92;
 }
 
 .btn-act:disabled {
-    background: #3d3d3d;
-    color: #718093;
+    background: #3d3d3d !important;
+    color: #718093 !important;
     cursor: not-allowed;
 }
 
 .btn-end {
     background: #2ecc71 !important;
     color: #182026 !important;
-    font-size: 13px;
-    margin-top: 6px;
+    font-size: 12.5px;
+    margin-top: 4px;
 }
 
 .btn-stats {
@@ -216,33 +240,82 @@ body {
     color: #fff !important;
 }
 
-#modal-overlay {
+.btn-surrender {
+    background: #eb3b5a !important;
+    color: #fff !important;
+}
+
+#modal-overlay,
+#guide-overlay {
     position: fixed;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(0, 0, 0, 0.82);
     display: none;
     justify-content: center;
     align-items: center;
     z-index: 2000;
 }
 
-#modal-card {
+#modal-card,
+#guide-card {
     background: #182026;
     border: 2px solid #9b59b6;
     border-radius: 8px;
-    padding: 20px;
-    width: 760px;
+    padding: 18px 22px;
+    width: 820px;
+    max-height: 88vh;
+    overflow-y: auto;
     box-sizing: border-box;
+}
+
+#guide-card {
+    border-color: #0abde3;
+}
+
+#guide-content h4 {
+    color: #feca57;
+    margin: 12px 0 6px 0;
+    font-size: 14px;
+}
+
+#guide-content ul {
+    margin: 4px 0 10px 18px;
+    padding: 0;
+    font-size: 12.5px;
+    line-height: 1.45;
+}
+
+.guide-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-bottom: 10px;
+}
+
+.guide-table th,
+.guide-table td {
+    border: 1px solid #3c6382;
+    padding: 6px 8px;
+    text-align: left;
+}
+
+.guide-table th {
+    background: #222f3e;
+    color: #0abde3;
+}
+
+.guide-table tr:nth-child(even) {
+    background: #1b252f;
 }
 
 .modal-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
 }
 
 .modal-title {
@@ -262,7 +335,7 @@ body {
 }
 
 .rooms-container {
-    max-height: 220px;
+    max-height: 240px;
     overflow-y: auto;
     margin-top: 8px;
 }

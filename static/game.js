@@ -3,7 +3,7 @@ let currentLang = "en";
 let state = null;
 let cellSize = 34.0;
 let camX = 24.0, camY = 24.0;
-let isPanning = false, panStartX = 0, panStartY = 0;
+let isPanning = false, panMoved = false, panStartX = 0, panStartY = 0;
 let chartInstance = null;
 
 const canvas = document.getElementById("board");
@@ -26,31 +26,53 @@ function clampCamera() {
 }
 
 canvas.addEventListener("contextmenu", e => e.preventDefault());
+
 canvas.addEventListener("mousedown", e => {
   const pos = getCanvasCoords(e);
-  if (e.button === 1 || e.button === 2) {
-    isPanning = true;
-    panStartX = pos.x;
-    panStartY = pos.y;
-  } else if (e.button === 0) {
+  if (e.button === 0) {
     const c = Math.floor((pos.x - camX) / cellSize);
     const r = Math.floor((pos.y - camY) / cellSize);
     if (r >= 0 && r < 18 && c >= 0 && c < 18) {
-      sendAct("click_tile", r, c);
+      sendAct("select_tile", r, c);
     }
+  } else if (e.button === 1 || e.button === 2) {
+    isPanning = true;
+    panMoved = false;
+    panStartX = pos.x;
+    panStartY = pos.y;
   }
 });
-window.addEventListener("mouseup", () => { isPanning = false; });
+
+window.addEventListener("mouseup", e => {
+  if (isPanning && e.button === 2 && !panMoved) {
+    const pos = getCanvasCoords(e);
+    const c = Math.floor((pos.x - camX) / cellSize);
+    const r = Math.floor((pos.y - camY) / cellSize);
+    if (r >= 0 && r < 18 && c >= 0 && c < 18) {
+      sendAct("order_tile", r, c);
+    }
+  }
+  isPanning = false;
+});
+
 canvas.addEventListener("mousemove", e => {
   if (!isPanning) return;
   const pos = getCanvasCoords(e);
-  camX += (pos.x - panStartX);
-  camY += (pos.y - panStartY);
-  panStartX = pos.x;
-  panStartY = pos.y;
-  clampCamera();
-  drawBoard();
+  const dx = pos.x - panStartX;
+  const dy = pos.y - panStartY;
+  if (Math.hypot(dx, dy) > 5) {
+    panMoved = true;
+  }
+  if (panMoved) {
+    camX += dx;
+    camY += dy;
+    panStartX = pos.x;
+    panStartY = pos.y;
+    clampCamera();
+    drawBoard();
+  }
 });
+
 canvas.addEventListener("wheel", e => {
   e.preventDefault();
   const pos = getCanvasCoords(e);
@@ -62,6 +84,13 @@ canvas.addEventListener("wheel", e => {
   camY = pos.y - (pos.y - camY) * ratio;
   clampCamera();
   drawBoard();
+});
+
+window.addEventListener("beforeunload", () => {
+  if (currentUser) {
+    const blob = new Blob([JSON.stringify({ username: currentUser })], { type: "application/json" });
+    navigator.sendBeacon("/api/leave_beacon", blob);
+  }
 });
 
 function applyStaticLabels(t) {
@@ -76,7 +105,8 @@ function applyStaticLabels(t) {
   document.getElementById("lbl-btn-guest").textContent = t.btnGuest;
 
   document.getElementById("lbl-box-profile").textContent = t.boxProfile;
-  document.getElementById("btn-logout").textContent = "Logout";
+  document.getElementById("btn-guide").textContent = t.btnGuide || "Guide";
+  document.getElementById("btn-logout").textContent = t.btnLogout || "Logout";
   document.getElementById("btn-lang").textContent = currentLang === "en" ? "UK" : "EN";
 
   document.getElementById("lbl-box-createroom").textContent = t.createRoomTitle;
@@ -88,6 +118,7 @@ function applyStaticLabels(t) {
   document.getElementById("lbl-btn-createroom").textContent = t.btnCreateRoom;
   document.getElementById("lbl-btn-quickai").textContent = t.btnQuickAi;
   document.getElementById("lbl-box-roomslist").textContent = t.roomsListTitle;
+  document.getElementById("btn-leave-room").textContent = t.btnLeaveRoom;
 
   document.getElementById("lbl-box-telemetry").textContent = t.boxTelemetry;
   document.getElementById("lbl-box-inspector").textContent = t.boxInspector;
@@ -103,8 +134,16 @@ function applyStaticLabels(t) {
   document.getElementById("b-sar").textContent = t.btnSar;
   document.getElementById("b-stats").textContent = t.btnStats;
   document.getElementById("b-end").textContent = t.btnEnd;
+  document.getElementById("b-surrender").textContent = t.btnSurrender || "Surrender";
+  document.getElementById("b-backlobby").textContent = t.btnBackLobby || "Leave";
+
   document.getElementById("lbl-modal-title").textContent = t.modalTitle;
   document.getElementById("btn-modal-close").textContent = t.btnClose;
+  document.getElementById("lbl-guide-title").textContent = t.guideModalTitle || "Guide";
+  document.getElementById("btn-guide-close").textContent = t.btnClose;
+  if (t.guideHtml) {
+    document.getElementById("guide-content").innerHTML = t.guideHtml;
+  }
 }
 
 async function initApp() {
@@ -153,7 +192,10 @@ async function submitAuth(mode) {
   }
 }
 
-function logoutUser() {
+async function logoutUser() {
+  if (currentUser) {
+    await roomAction("leave");
+  }
   currentUser = "";
   document.getElementById("app-container").style.display = "none";
   document.getElementById("auth-screen").style.display = "flex";
@@ -162,7 +204,7 @@ function logoutUser() {
 
 async function toggleLanguage() {
   currentLang = currentLang === "en" ? "uk" : "en";
-  await fetchState();
+  await sendAct("set_lang", null, null, currentLang);
 }
 
 async function fetchState() {
@@ -216,7 +258,8 @@ function createRoom() {
 }
 
 function quickBotMatch() {
-  roomAction("quick_bot_match", { max_players: 2, fill_ai: true });
+  const modeVal = document.querySelector('input[name="room-mode"]:checked').value;
+  roomAction("quick_bot_match", { max_players: parseInt(modeVal), fill_ai: true });
 }
 
 async function joinRoom(rid, isPriv) {
@@ -227,7 +270,17 @@ async function joinRoom(rid, isPriv) {
   await roomAction("join", { room_id: rid, password: pass });
 }
 
+async function confirmSurrender() {
+  const msg = (state && state.ui_text && state.ui_text.surrenderConfirm)
+    ? state.ui_text.surrenderConfirm
+    : "Are you sure you want to surrender?";
+  if (confirm(msg)) {
+    await sendAct("surrender");
+  }
+}
+
 async function sendAct(action_type, r = null, c = null, param = null) {
+  if (!currentUser) return;
   try {
     const res = await fetch("/api/action", {
       method: "POST",
@@ -247,7 +300,7 @@ function updateUI() {
   const t = state.ui_text;
   applyStaticLabels(t);
 
-  document.getElementById("current-user-display").textContent = `${state.username} (${t.baseRating || "Base"}: ${state.base_rating.toFixed(2)})`;
+  document.getElementById("current-user-display").textContent = `${state.username} (${t.baseLabel}: ${state.base_rating.toFixed(2)})`;
 
   const screen = state.screen || "lobby";
   const lobbyPanel = document.getElementById("lobby-panel");
@@ -270,8 +323,8 @@ function updateUI() {
         const stText = rm.status === "waiting" ? t.statusWaiting : (rm.status === "playing" ? t.statusPlaying : t.statusFinished);
         card.innerHTML = `
           <div class="room-info">
-            <h4>${rm.name} ${rm.is_private ? '🔒' : ''}</h4>
-            <p>${t.playersCount}: ${rm.filled_slots}/${rm.max_players} | ${t.hostLabel}: ${rm.host} | Status: ${stText}</p>
+            <h4>${rm.name} (${rm.max_players}P) ${rm.is_private ? '🔒' : ''}</h4>
+            <p>${t.playersCount}: ${rm.filled_slots}/${rm.max_players} | ${t.hostLabel}: ${rm.host} | ${stText}</p>
           </div>
           <button class="auth-btn" style="padding: 6px 14px; font-size: 11px;" onclick="joinRoom('${rm.room_id}', ${rm.is_private})">${t.btnJoin}</button>
         `;
@@ -284,7 +337,7 @@ function updateUI() {
     gamePanel.style.display = "none";
 
     const rm = state.room;
-    document.getElementById("room-lobby-title").textContent = `${t.roomLobbyTitle} ${rm.name}`;
+    document.getElementById("room-lobby-title").textContent = `${t.roomLobbyTitle} ${rm.name} (${rm.max_players}P)`;
     const slotsCont = document.getElementById("room-slots-container");
     slotsCont.innerHTML = "";
 
@@ -304,7 +357,7 @@ function updateUI() {
         if (state.is_host) {
           btnHtml += ` <button class="auth-btn" style="font-size:10px; padding:4px 8px; background:#f39c12;" onclick="roomAction('add_ai', {slot_faction: ${slot.faction}})">${t.btnAddAi}</button>`;
         }
-      } else if (state.is_host && slot.faction !== 2) {
+      } else if (state.is_host && slot.username !== state.username) {
         btnHtml = `<button class="auth-btn" style="font-size:10px; padding:4px 8px; background:#eb3b5a;" onclick="roomAction('kick_slot', {slot_faction: ${slot.faction}})">${t.btnKick}</button>`;
       }
 
@@ -325,16 +378,42 @@ function updateUI() {
     roomLobbyPanel.style.display = "none";
     gamePanel.style.display = "flex";
 
-    const p2 = state.p2 || {};
-    const p1 = state.p1 || {};
+    const bannerEl = document.getElementById("turn-status-banner");
+    if (state.match_finished) {
+      bannerEl.className = "turn-banner turn-finished";
+      bannerEl.textContent = `${t.matchFinishedBanner}${state.winner_name || ("F" + state.winner_faction)}`;
+    } else if (state.my_alive === false) {
+      bannerEl.className = "turn-banner turn-dead";
+      bannerEl.textContent = t.eliminatedBanner;
+    } else if (state.is_my_turn) {
+      bannerEl.className = "turn-banner turn-my";
+      bannerEl.textContent = t.yourTurnBanner;
+    } else {
+      bannerEl.className = "turn-banner turn-wait";
+      bannerEl.textContent = `${t.waitingTurnBanner}${state.current_turn_user} (F${state.current_turn_faction})`;
+    }
+
+    const fKeys = state.factions ? Object.keys(state.factions).sort((a, b) => parseInt(a) - parseInt(b)) : [];
+    let facLines = [];
+    for (const fk of fKeys) {
+      const fd = state.factions[fk];
+      const isMe = (parseInt(fk) === state.my_faction);
+      const isTurn = (parseInt(fk) === state.current_turn_faction && !state.match_finished);
+      const turnMark = isTurn ? "▶ " : "  ";
+      const meTag = isMe ? ` [${t.youTag}]` : "";
+      if (!fd.alive) {
+        facLines.push(`${turnMark}F${fk} (${fd.controller})${meTag}: [${t.deadTag}]`);
+      } else {
+        facLines.push(
+          `${turnMark}F${fk} (${fd.controller})${meTag}: ${t.goldLabel} ${fd.gold.toFixed(2)}$ | ${t.landLabel} ${fd.tiles} (+${fd.inc.toFixed(2)}$) | ${t.armyLabel} ${fd.army} (-${fd.upk.toFixed(2)}$) | ${fd.net >= 0 ? '+' : ''}${fd.net.toFixed(2)}$${t.perTurn} | HQ: ${fd.castle_hp.toFixed(0)}`
+        );
+      }
+    }
+
     document.getElementById("telemetry-text").textContent =
-      `${t.playerLabel}: ${state.username} (${t.currentTurnLabel}: ${state.current_turn_user})\n` +
-      `${t.matchLabel}: Turn ${state.turn}/${state.max_turns} | ${t.winrateLabel}: ${state.winrate.toFixed(2)}%\n` +
-      `----------------------------------------------------\n` +
-      `YOU (F${state.my_faction}): Gold ${p2.gold?.toFixed(2) || 0}$ | Land: ${p2.tiles || 0} (+${p2.inc?.toFixed(2) || 0}$)\n` +
-      `            Army: ${p2.army || 0} (${t.upkeepLabel}: -${p2.upk?.toFixed(2) || 0}$) | Net: ${p2.net >= 0 ? '+' : ''}${p2.net?.toFixed(2) || 0}$${t.perTurn}\n` +
-      `OPPONENT: Gold ${p1.gold?.toFixed(2) || 0}$ | Land: ${p1.tiles || 0} (+${p1.inc?.toFixed(2) || 0}$)\n` +
-      `            Army: ${p1.army || 0} (${t.upkeepLabel}: -${p1.upk?.toFixed(2) || 0}$) | Net: ${p1.net >= 0 ? '+' : ''}${p1.net?.toFixed(2) || 0}$${t.perTurn}`;
+      `${t.playerLabel}: ${state.username} | ${t.turnLabel}: ${state.turn}/${state.max_turns} | ${t.winrateLabel}: ${state.winrate.toFixed(2)}%\n` +
+      `------------------------------------------------------------\n` +
+      facLines.join("\n");
 
     document.getElementById("gen-live-badge").textContent =
       `${t.activeGenPrefix}: ${state.active_gen_label} | ${t.ratingLabel}: ${state.active_rating.toFixed(2)}`;
@@ -352,7 +431,14 @@ function updateUI() {
     evoEl.textContent = logLines.join("\n");
 
     document.getElementById("inspector-text").textContent = state.inspector.lines.join("\n");
-    const turnActive = state.is_my_turn && !state.match_finished;
+    if (state.inspector.disband_refund_val > 0) {
+      document.getElementById("b-dis").textContent = `${t.btnDis.split('(')[0].trim()} (+${state.inspector.disband_refund_val.toFixed(2)}$)`;
+    }
+    if (state.inspector.demolish_refund_val > 0) {
+      document.getElementById("b-dem").textContent = `${t.btnDem.split('(')[0].trim()} (+${state.inspector.demolish_refund_val.toFixed(2)}$)`;
+    }
+
+    const turnActive = state.is_my_turn && !state.match_finished && state.my_alive !== false;
     document.getElementById("b-heal").disabled = !turnActive || !state.inspector.can_heal;
     document.getElementById("b-harv").disabled = !turnActive || !state.inspector.can_harvest;
     document.getElementById("b-tow").disabled = !turnActive || !state.inspector.can_build_tower;
@@ -363,6 +449,7 @@ function updateUI() {
     document.getElementById("b-swr").disabled = !turnActive || !state.inspector.can_spawn_warrior;
     document.getElementById("b-sar").disabled = !turnActive || !state.inspector.can_spawn_archer;
     document.getElementById("b-end").disabled = !turnActive;
+    document.getElementById("b-surrender").disabled = state.match_finished || state.my_alive === false;
   }
 
   drawBoard();
@@ -379,14 +466,19 @@ function drawUnitIcon(cx, cy, rad, uType, faction) {
 
   if (uType === "worker") {
     ctx.beginPath();
-    ctx.moveTo(cx - rad * 0.4, cy + rad * 0.4);
-    ctx.lineTo(cx + rad * 0.35, cy - rad * 0.35);
+    ctx.moveTo(cx - rad * 0.44, cy + rad * 0.44);
+    ctx.lineTo(cx + rad * 0.18, cy - rad * 0.18);
     ctx.stroke();
 
-    ctx.beginPath();
-    ctx.moveTo(cx - rad * 0.15, cy - rad * 0.48);
-    ctx.quadraticCurveTo(cx + rad * 0.3, cy - rad * 0.3, cx + rad * 0.48, cy + rad * 0.15);
-    ctx.stroke();
+    ctx.save();
+    ctx.translate(cx + rad * 0.18, cy - rad * 0.18);
+    ctx.rotate(-Math.PI / 4);
+    const hw = rad * 0.34;
+    const hh = rad * 0.72;
+    ctx.fillRect(-hw / 2, -hh / 2, hw, hh);
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(-hw / 2, -hh / 2, hw, hh);
+    ctx.restore();
   } else if (uType === "warrior") {
     ctx.beginPath();
     ctx.moveTo(cx - rad * 0.42, cy + rad * 0.42);
@@ -419,7 +511,8 @@ function drawBoard() {
   ctx.strokeStyle = "#2c3e50";
   ctx.lineWidth = 2;
   ctx.strokeRect(ox - cs, oy - cs, boardPx + 2 * cs, boardPx + 2 * cs);
-  ctx.strokeStyle = "#feca57";
+  ctx.strokeStyle = (state.is_my_turn && !state.match_finished) ? "#2ecc71" : "#feca57";
+  ctx.lineWidth = (state.is_my_turn && !state.match_finished) ? 3.5 : 2;
   ctx.strokeRect(ox - 2, oy - 2, boardPx + 4, boardPx + 4);
 
   const factionColors = { 1: "#eb3b5a", 2: "#0fbcf9", 3: "#2ecc71", 4: "#feca57" };
@@ -466,8 +559,8 @@ function drawBoard() {
   }
 
   const castles = [
-    { r: 17, c: 0, hp: state.factions?.["1"]?.castle_hp || state.p1?.castle_hp || 0, col: "#83142c", lbl: "F1" },
-    { r: 0, c: 17, hp: state.factions?.["2"]?.castle_hp || state.p2?.castle_hp || 0, col: "#0a3d62", lbl: "F2" },
+    { r: 17, c: 0, hp: state.factions?.["1"]?.castle_hp || 0, col: "#83142c", lbl: "F1" },
+    { r: 0, c: 17, hp: state.factions?.["2"]?.castle_hp || 0, col: "#0a3d62", lbl: "F2" },
     { r: 0, c: 0, hp: state.factions?.["3"]?.castle_hp || 0, col: "#1e5128", lbl: "F3" },
     { r: 17, c: 17, hp: state.factions?.["4"]?.castle_hp || 0, col: "#4a3b8c", lbl: "F4" }
   ];
@@ -531,8 +624,15 @@ function drawBoard() {
     ctx.beginPath();
     ctx.arc(cx, cy, rad, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = (u.faction === state.my_faction && u.ready) ? "#2ecc71" : (u.efficiency >= minEff ? "#feca57" : "#dcdde1");
-    ctx.lineWidth = 2;
+
+    let ringCol = "#dcdde1";
+    if (u.faction === state.my_faction && u.ready) {
+      ringCol = (u.moved && !u.attacked) ? "#e056fd" : "#2ecc71";
+    } else if (u.efficiency >= minEff) {
+      ringCol = "#feca57";
+    }
+    ctx.strokeStyle = ringCol;
+    ctx.lineWidth = 2.2;
     ctx.stroke();
     drawUnitIcon(cx, cy, rad, u.type, u.faction);
 
@@ -556,12 +656,41 @@ function openStatsModal() {
   const t = state.ui_text;
   document.getElementById("modal-overlay").style.display = "flex";
   const st = state.stats;
-  document.getElementById("stats-summary").textContent =
-    `${t.statsPlayerCurr}: ${st.player_current.toFixed(2)} (${t.medianWord}: ${st.player_median.toFixed(2)}) | ` +
-    `${t.statsAiCurr}: ${st.ai_current.toFixed(2)} (${t.medianWord}: ${st.ai_median.toFixed(2)})`;
 
-  const pMedLine = st.turns.map(() => st.player_median);
-  const aiMedLine = st.turns.map(() => st.ai_median);
+  const factionColors = { "1": "#eb3b5a", "2": "#0fbcf9", "3": "#2ecc71", "4": "#feca57" };
+  const fKeys = st.factions_eff ? Object.keys(st.factions_eff).sort((a, b) => parseInt(a) - parseInt(b)) : ["1", "2"];
+
+  let summaryParts = [];
+  let datasets = [];
+
+  for (const fk of fKeys) {
+    const arr = st.factions_eff ? st.factions_eff[fk] : (fk === "2" ? st.player_eff : st.ai_eff);
+    const med = st.factions_median ? st.factions_median[fk] : (fk === "2" ? st.player_median : st.ai_median);
+    const curr = (arr && arr.length > 0) ? arr[arr.length - 1] : 0.0;
+    const fInfo = state.factions && state.factions[fk] ? state.factions[fk] : null;
+    const fLabel = fInfo ? `F${fk} (${fInfo.controller})` : `Faction ${fk}`;
+    const col = factionColors[fk] || "#ffffff";
+
+    summaryParts.push(`<b>${fLabel}:</b> ${curr.toFixed(2)} (${t.medianWord}: ${med.toFixed(2)})`);
+
+    datasets.push({
+      label: fLabel,
+      data: arr,
+      borderColor: col,
+      borderWidth: 2.4,
+      tension: 0.2
+    });
+    datasets.push({
+      label: `${fLabel} ${t.medianWord} (${med.toFixed(2)})`,
+      data: st.turns.map(() => med),
+      borderColor: col,
+      borderDash: [6, 4],
+      borderWidth: 1.3,
+      pointRadius: 0
+    });
+  }
+
+  document.getElementById("stats-summary").innerHTML = summaryParts.join(" &nbsp;|&nbsp; ");
 
   if (chartInstance) chartInstance.destroy();
   const cctx = document.getElementById("effChart").getContext("2d");
@@ -569,16 +698,11 @@ function openStatsModal() {
     type: "line",
     data: {
       labels: st.turns.map(turnNum => `${t.chartTurn} ${turnNum}`),
-      datasets: [
-        { label: t.chartPlayerEff, data: st.player_eff, borderColor: "#0fbcf9", borderWidth: 2.5, tension: 0.2 },
-        { label: `${t.chartPlayerMed} (${st.player_median.toFixed(2)})`, data: pMedLine, borderColor: "#0fbcf9", borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 },
-        { label: t.chartAiEff, data: st.ai_eff, borderColor: "#eb3b5a", borderWidth: 2.5, tension: 0.2 },
-        { label: `${t.chartAiMed} (${st.ai_median.toFixed(2)})`, data: aiMedLine, borderColor: "#eb3b5a", borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 }
-      ]
+      datasets: datasets
     },
     options: {
       responsive: true,
-      plugins: { legend: { labels: { color: "#fff" } } },
+      plugins: { legend: { labels: { color: "#fff", boxWidth: 14, font: { size: 11 } } } },
       scales: {
         x: { ticks: { color: "#c8d6e5" } },
         y: { ticks: { color: "#c8d6e5" } }
@@ -591,11 +715,19 @@ function closeStatsModal() {
   document.getElementById("modal-overlay").style.display = "none";
 }
 
+function openGuideModal() {
+  document.getElementById("guide-overlay").style.display = "flex";
+}
+
+function closeGuideModal() {
+  document.getElementById("guide-overlay").style.display = "none";
+}
+
 clampCamera();
 initApp();
 
 setInterval(() => {
-  if (state && (state.is_training_new_gen || state.screen === "game")) {
+  if (state && (state.is_training_new_gen || state.screen === "game" || state.screen === "room_lobby" || state.screen === "lobby")) {
     fetchState();
   }
 }, 2000);

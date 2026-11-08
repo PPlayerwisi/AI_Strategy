@@ -450,6 +450,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         max_hp = float(UNIT_STATS[u_type]['max_hp'])
         uid = int(self.next_unit_id)
         self.next_unit_id += 1
+        is_r = bool(ready)
         return {
             'id': uid,
             'faction': int(faction),
@@ -457,11 +458,25 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
             'role_id': int(ROLE_IDS.get(str(u_type), 0)),
             'hp': max_hp,
             'max_hp': max_hp,
-            'ready': bool(ready),
+            'ready': is_r,
+            'moved': not is_r,
+            'attacked': not is_r,
             'efficiency': 0.00,
             'history': [],
             'recent_positions': deque(maxlen=OSCILLATION_MEMORY_LEN)
         }
+
+    def _refresh_unit_readiness(self, pos: tuple):
+        if pos not in self.units:
+            return
+        u = self.units[pos]
+        if u.get('moved', False) and u.get('attacked', False):
+            u['ready'] = False
+            return
+        has_moves = (not u.get('moved', False)) and (len(self.get_valid_moves_for_unit(pos)) > 0)
+        has_atks = (not u.get('attacked', False)) and (len(self.get_valid_attack_targets(pos)) > 0)
+        has_special = (not u.get('moved', False)) and (not u.get('attacked', False))
+        u['ready'] = bool(has_moves or has_atks or has_special)
 
     def compute_faction_total_efficiency(self, faction: int) -> float:
         f = int(faction)
@@ -490,10 +505,12 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         ai_med = round(float(np.median(ai_arr)), 2) if len(ai_arr) > 0 else 0.00
         f_eff = {}
         f_med = {}
+        f_curr = {}
         for f in self.active_factions:
             arr = self.efficiency_timeline["factions_eff"].get(f, [])
             f_eff[str(f)] = [float(x) for x in arr]
             f_med[str(f)] = round(float(np.median(arr)), 2) if len(arr) > 0 else 0.00
+            f_curr[str(f)] = round(float(arr[-1]), 2) if len(arr) > 0 else 0.00
         return {
             "turns": [int(x) for x in self.efficiency_timeline["turns"]],
             "player_eff": [float(x) for x in p_arr],
@@ -504,6 +521,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
             "ai_current": float(ai_arr[-1]) if ai_arr else 0.00,
             "factions_eff": f_eff,
             "factions_median": f_med,
+            "factions_current": f_curr,
             "active_rating": [float(x) for x in self.efficiency_timeline["active_rating"]],
             "active_label": [str(x) for x in self.efficiency_timeline["active_label"]]
         }
@@ -749,34 +767,50 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         net_inc = gross_inc - total_upkeep
         return round(gross_inc, 2), round(total_upkeep, 2), round(net_inc, 2), int(tile_cnt), int(unit_cnt)
 
-    def _prepare_faction_turn(self, faction: int, collect_economy=True):
+    def collect_faction_economy(self, faction: int):
+        f = int(faction)
+        if not self.is_faction_alive(f):
+            return
+        if self.is_faction_ai(f):
+            self._prevent_bankruptcy_by_disbanding(f)
+
+        gross_inc, upkeep, net_inc, _, _ = self.get_faction_economy_stats(f)
+        curr_gold = self.get_faction_gold(f)
+        new_gold = curr_gold + net_inc
+
+        if new_gold < 0.00:
+            dead_coords = [pos for pos, u in self.units.items() if u['faction'] == f]
+            for pos in dead_coords:
+                u_dead = self.units.pop(pos)
+                u_dead['efficiency'] = round(u_dead['efficiency'] - EFFICIENCY_REWARDS["early_death_penalty"], 2)
+                self.archived_units.append(u_dead)
+            new_gold = 0.00
+            self._fp_dirty = True
+            msg_key = "bankruptcy_ai" if self.is_faction_ai(f) else "bankruptcy_player"
+            self.add_localized_event(msg_key)
+        else:
+            new_gold = min(MAX_GOLD, new_gold)
+
+        self.set_faction_gold(f, new_gold)
+
+    def collect_global_round_economy(self):
+        for f in self.active_factions:
+            if self.is_faction_alive(f):
+                self.collect_faction_economy(f)
+
+    def _prepare_faction_turn(self, faction: int, collect_economy=False):
         f = int(faction)
         if not self.is_faction_alive(f):
             return
 
         if collect_economy:
-            gross_inc, upkeep, net_inc, _, _ = self.get_faction_economy_stats(f)
-            curr_gold = self.get_faction_gold(f)
-            new_gold = curr_gold + net_inc
-
-            if new_gold < 0.00:
-                dead_coords = [pos for pos, u in self.units.items() if u['faction'] == f]
-                for pos in dead_coords:
-                    u_dead = self.units.pop(pos)
-                    u_dead['efficiency'] = round(u_dead['efficiency'] - EFFICIENCY_REWARDS["early_death_penalty"], 2)
-                    self.archived_units.append(u_dead)
-                new_gold = 0.00
-                self._fp_dirty = True
-                msg_key = "bankruptcy_ai" if self.is_faction_ai(f) else "bankruptcy_player"
-                self.add_localized_event(msg_key)
-            else:
-                new_gold = min(MAX_GOLD, new_gold)
-
-            self.set_faction_gold(f, new_gold)
+            self.collect_faction_economy(f)
 
         for pos, u in self.units.items():
             if u['faction'] == f:
                 u['ready'] = True
+                u['moved'] = False
+                u['attacked'] = False
 
         for r in range(self.grid_size):
             for c in range(self.grid_size):
@@ -834,7 +868,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         if pos not in self.units:
             return []
         u = self.units[pos]
-        if not u['ready']:
+        if not u['ready'] or u.get('moved', False):
             return []
         faction = u['faction']
         max_dist = UNIT_STATS[u['type']]['move_range']
@@ -862,7 +896,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
             if pos not in self.units:
                 return []
             u = self.units[pos]
-            if not u['ready']:
+            if not u['ready'] or u.get('attacked', False):
                 return []
             faction = u['faction']
             atk_range = UNIT_STATS[u['type']]['atk_range']
@@ -906,9 +940,13 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         if pos not in self.units:
             return 0.00
         u = self.units[pos]
+        if u.get('moved', False) or u.get('attacked', False) or not u['ready']:
+            return 0.00
         heal_amount = round(u['max_hp'] * HEAL_PCT, 2)
         old_hp = u['hp']
         u['hp'] = min(u['max_hp'], round(u['hp'] + heal_amount, 2))
+        u['moved'] = True
+        u['attacked'] = True
         u['ready'] = False
         gained = round(u['hp'] - old_hp, 2)
         u['efficiency'] = round(u['efficiency'] + gained * EFFICIENCY_REWARDS["heal_mult"], 2)
@@ -917,8 +955,10 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
     def heal_all_unmoved_units(self, faction: int):
         f = int(faction)
         for pos, u in list(self.units.items()):
-            if u['faction'] == f and u['ready']:
+            if u['faction'] == f and u['ready'] and not u.get('moved', False) and not u.get('attacked', False):
                 self.heal_unit_percentage(pos)
+            elif u['faction'] == f:
+                u['ready'] = False
 
     def execute_unit_disband(self, pos: tuple) -> float:
         if pos not in self.units:
@@ -949,7 +989,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         if pos not in self.units:
             return 0.00, 0
         u = self.units[pos]
-        if u['type'] != 'worker' or not u['ready']:
+        if u['type'] != 'worker' or not u['ready'] or u.get('attacked', False):
             return 0.00, 0
         f = int(u['faction'])
         target_site = self._find_demolishable_structure_site(pos, f)
@@ -967,6 +1007,8 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
 
         self.set_faction_gold(f, min(MAX_GOLD, self.get_faction_gold(f) + refund))
 
+        u['moved'] = True
+        u['attacked'] = True
         u['ready'] = False
         self._fp_dirty = True
         self._cluster_dirty = True
@@ -992,7 +1034,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         if start_pos not in self.units or dest_pos in self.units:
             return False
         u = self.units[start_pos]
-        if not u['ready']:
+        if not u['ready'] or u.get('moved', False):
             return False
         valid_moves = self.get_valid_moves_for_unit(start_pos)
         if dest_pos not in valid_moves:
@@ -1024,10 +1066,15 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
                 eff_gain += self._capture_tile(best_mid[0], best_mid[1], f, u_type=u_type)
 
         del self.units[start_pos]
-        u['ready'] = False
+        u['moved'] = True
         eff_gain += self._capture_tile(dest_pos[0], dest_pos[1], f, u_type=u_type)
         u['efficiency'] = round(u['efficiency'] + eff_gain, 2)
-        self.units[(int(dest_pos[0]), int(dest_pos[1]))] = u
+        new_coord = (int(dest_pos[0]), int(dest_pos[1]))
+        self.units[new_coord] = u
+        if not u.get('attacked', False) and len(self.get_valid_attack_targets(new_coord)) > 0:
+            u['ready'] = True
+        else:
+            u['ready'] = False
         self._fp_dirty = True
         return True
 
@@ -1047,7 +1094,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
             if attacker_pos not in self.units:
                 return 0.00
             attacker_u = self.units[attacker_pos]
-            if not attacker_u['ready']:
+            if not attacker_u['ready'] or attacker_u.get('attacked', False):
                 return 0.00
             faction = attacker_u['faction']
             atk_range = UNIT_STATS[attacker_u['type']]['atk_range']
@@ -1055,7 +1102,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
             if target_pos not in valid_targets:
                 return 0.00
             dmg = UNIT_STATS[attacker_u['type']]['dmg']
-            attacker_u['ready'] = False
+            attacker_u['attacked'] = True
 
         f = int(faction)
         enemies = set(self.get_enemy_factions(f))
@@ -1099,11 +1146,16 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
                         kill_bonus += 15.00
                     break
 
-        if attacker_u is not None and dealt > 0.00:
-            combat_mult = 1.85 if attacker_u['type'] != 'worker' else 0.20
-            attacker_u['efficiency'] = round(
-                attacker_u['efficiency'] + (dealt * EFFICIENCY_REWARDS["damage_dealt_mult"] + kill_bonus) * combat_mult, 2
-            )
+        if attacker_u is not None:
+            if dealt > 0.00:
+                combat_mult = 1.85 if attacker_u['type'] != 'worker' else 0.20
+                attacker_u['efficiency'] = round(
+                    attacker_u['efficiency'] + (dealt * EFFICIENCY_REWARDS["damage_dealt_mult"] + kill_bonus) * combat_mult, 2
+                )
+            if not attacker_u.get('moved', False) and len(self.get_valid_moves_for_unit(attacker_pos)) > 0:
+                attacker_u['ready'] = True
+            else:
+                attacker_u['ready'] = False
 
         return float(dealt)
 
@@ -1111,7 +1163,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         if pos not in self.units:
             return 0.00
         u = self.units[pos]
-        if u['type'] != 'worker' or not u['ready']:
+        if u['type'] != 'worker' or not u['ready'] or u.get('attacked', False):
             return 0.00
         f = int(u['faction'])
         r, c = pos
@@ -1122,6 +1174,8 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         eff_cap = self._capture_tile(r, c, f, u_type='worker')
         bonus = round(eff_val * 1.50, 2)
         self.set_faction_gold(f, min(MAX_GOLD, self.get_faction_gold(f) + bonus))
+        u['moved'] = True
+        u['attacked'] = True
         u['ready'] = False
         u['efficiency'] = round(u['efficiency'] + eff_cap + bonus * EFFICIENCY_REWARDS["harvest_bonus_mult"], 2)
         return float(bonus)
@@ -1185,7 +1239,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         if pos not in self.units:
             return False
         u = self.units[pos]
-        if u['type'] != 'worker' or not u['ready']:
+        if u['type'] != 'worker' or not u['ready'] or u.get('attacked', False):
             return False
         f = int(u['faction'])
         is_ai = self.is_faction_ai(f)
@@ -1213,6 +1267,8 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         self.struct_type[sr, sc] = build_type
         self.struct_hp[sr, sc] = STRUCT_STATS[build_type]['max_hp']
         self.tower_ready[sr, sc] = False
+        u['moved'] = True
+        u['attacked'] = True
         u['ready'] = False
         u['efficiency'] = round(u['efficiency'] + EFFICIENCY_REWARDS["build_struct_bonus"], 2)
 
@@ -1290,7 +1346,7 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
             mask[24] = True
             mask[28] = True
 
-            if u['type'] == 'worker':
+            if u['type'] == 'worker' and not u.get('attacked', False):
                 if int(self.terrain[r, c]) != 0 and self.get_effective_tile_yield(r, c) > 0.00:
                     mask[25] = True
                 if not is_ai or self.turn_count > AI_BUILD_LOCK_TURNS:
@@ -1364,8 +1420,11 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
                     self.last_ai_turn_traces.append({"kind": "attack", "faction": f, "from": [int(r), int(c)], "to": [int(target[0]), int(target[1])]})
                     self.add_localized_event("ai_attack", u_type=u_type, r=target[0], c=target[1], dmg=dmg)
             elif action == 24:
-                healed = self.heal_unit_percentage(pos)
-                reward += healed * 0.04
+                if not self.units[pos].get('moved', False) and not self.units[pos].get('attacked', False):
+                    healed = self.heal_unit_percentage(pos)
+                    reward += healed * 0.04
+                else:
+                    self.units[pos]['ready'] = False
             elif action == 25:
                 bonus = self.execute_worker_harvest(pos)
                 reward += bonus * 0.20
@@ -1530,11 +1589,16 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
         reward = -0.002
 
         if not self.p1_entity_queue:
-            self._prepare_faction_turn(faction=1, collect_economy=True)
+            self._prepare_faction_turn(faction=1, collect_economy=False)
 
         if self.p1_entity_queue:
             kind, pos = self.p1_entity_queue.popleft()
             reward += self.apply_entity_action(kind, pos, faction=1, action=int(action))
+            if kind == 'unit':
+                for upos, u in list(self.units.items()):
+                    if u['faction'] == 1 and u['ready'] and u.get('moved', False) and not u.get('attacked', False):
+                        if ('unit', upos) not in self.p1_entity_queue:
+                            self.p1_entity_queue.appendleft(('unit', upos))
 
         winner_f = self.get_match_winner()
         if winner_f is not None:
@@ -1555,12 +1619,13 @@ class MicroRTSEnv(AIStrategistMixin, gym.Env):
                 return self._get_obs(), float(reward + term_rew), True, False, {"winner": f"p{winner_f}", "winning_faction": winner_f}
 
             self.turn_count += 1
+            self.collect_global_round_economy()
             self.record_turn_efficiency_snapshot()
             winner_f = self.get_match_winner()
             if winner_f is not None:
                 term_rew = 1.00 if winner_f == 1 else -1.00
                 return self._get_obs(), float(reward + term_rew), True, False, {"winner": f"p{winner_f}", "winning_faction": winner_f}
 
-            self._prepare_faction_turn(faction=1, collect_economy=True)
+            self._prepare_faction_turn(faction=1, collect_economy=False)
 
         return self._get_obs(), float(reward), False, False, {}

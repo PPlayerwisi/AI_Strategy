@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <title id="page-title">Faction Warfare RTS</title>
-    <link rel="stylesheet" href="/static/style.css?v=4" />
+    <link rel="stylesheet" href="/static/style.css?v=5" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body>
@@ -74,28 +74,26 @@
                 font-weight: bold;
                 color: #0abde3;
                 flex: 1;
-                font-size: 13px;
+                font-size: 12.5px;
               "
             ></span>
             <button
+              id="btn-guide"
+              style="background: #f39c12; color: #182026"
+              onclick="openGuideModal()"
+            >
+              Guide
+            </button>
+            <button
               id="btn-logout"
               class="auth-btn-secondary"
-              style="padding: 4px 8px; font-size: 11px"
               onclick="logoutUser()"
             >
               Logout
             </button>
             <button
               id="btn-lang"
-              style="
-                background: #576574;
-                color: #ffffff;
-                padding: 4px 8px;
-                font-size: 11px;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-              "
+              style="background: #576574; color: #ffffff"
               onclick="toggleLanguage()"
             >
               UK
@@ -174,6 +172,7 @@
                 Start Game
               </button>
               <button
+                id="btn-leave-room"
                 class="btn-act"
                 style="background: #eb3b5a"
                 onclick="roomAction('leave')"
@@ -188,6 +187,8 @@
           id="game-control-panel"
           style="display: none; flex-direction: column; flex: 1"
         >
+          <div id="turn-status-banner" class="turn-banner turn-my"></div>
+
           <div class="box">
             <div id="lbl-box-telemetry" class="box-title">
               SESSION TELEMETRY
@@ -291,14 +292,23 @@
           >
             End Turn
           </button>
-          <button
-            id="b-backlobby"
-            class="btn-act"
-            style="background: #576574; margin-top: 6px"
-            onclick="roomAction('leave')"
-          >
-            Back to Rooms
-          </button>
+          <div style="display: flex; gap: 6px; margin-top: 4px">
+            <button
+              id="b-surrender"
+              class="btn-act btn-surrender"
+              onclick="confirmSurrender()"
+            >
+              Surrender
+            </button>
+            <button
+              id="b-backlobby"
+              class="btn-act"
+              style="background: #576574"
+              onclick="roomAction('leave')"
+            >
+              Leave
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -317,11 +327,35 @@
             Close
           </button>
         </div>
-        <div id="stats-summary"></div>
+        <div
+          id="stats-summary"
+          style="
+            font-size: 12px;
+            color: #c8d6e5;
+            margin-bottom: 8px;
+            line-height: 1.4;
+          "
+        ></div>
         <canvas id="effChart" height="125"></canvas>
       </div>
     </div>
 
-    <script src="/static/game.js?v=4"></script>
+    <div id="guide-overlay">
+      <div id="guide-card">
+        <div class="modal-header">
+          <span id="lbl-guide-title" class="modal-title">Tactical Guide</span>
+          <button
+            id="btn-guide-close"
+            onclick="closeGuideModal()"
+            class="btn-close"
+          >
+            Close
+          </button>
+        </div>
+        <div id="guide-content"></div>
+      </div>
+    </div>
+
+    <script src="/static/game.js?v=5"></script>
   </body>
 </html>
