@@ -35,7 +35,10 @@
     "matches_played": 0,
     "recent_wins": [],
     "prev_winrate": 0.5,
-    "created_generations": []
+    "created_generations": [],
+    "is_registered": true,
+    "password_hash": "1d0a1f586b11942792b7a62f109d0c464910f34229ce749ab81b218d60ad21f7",
+    "lang": "en"
   },
   "kov": {
     "username": "kov",
