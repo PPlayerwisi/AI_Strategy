@@ -42,10 +42,12 @@
     "is_registered": true,
     "password_hash": "708317825be03026d0798a1efb024217d5fa44b8822cdfa76cd87866fcf28d4d",
     "lang": "en",
-    "base_rating": 35.0,
-    "matches_played": 0,
-    "recent_wins": [],
-    "prev_winrate": 0.5,
+    "base_rating": 10.0,
+    "matches_played": 1,
+    "recent_wins": [
+      0.0
+    ],
+    "prev_winrate": 0.0,
     "created_generations": []
   }
 }
