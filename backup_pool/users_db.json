@@ -39,8 +39,8 @@
   },
   "kov": {
     "username": "kov",
-    "is_registered": false,
-    "password_hash": "",
+    "is_registered": true,
+    "password_hash": "708317825be03026d0798a1efb024217d5fa44b8822cdfa76cd87866fcf28d4d",
     "lang": "en",
     "base_rating": 35.0,
     "matches_played": 0,
