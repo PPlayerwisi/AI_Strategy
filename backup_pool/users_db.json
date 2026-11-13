@@ -51,15 +51,16 @@
     "is_registered": true,
     "password_hash": "708317825be03026d0798a1efb024217d5fa44b8822cdfa76cd87866fcf28d4d",
     "lang": "uk",
-    "base_rating": 82.14,
-    "matches_played": 4,
+    "base_rating": 95.38,
+    "matches_played": 5,
     "recent_wins": [
       0.0,
       1.0,
       0.0,
+      1.0,
       1.0
     ],
-    "prev_winrate": 0.5,
+    "prev_winrate": 0.6,
     "created_generations": []
   },
   "Brutal1": {
