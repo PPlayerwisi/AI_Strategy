@@ -1,0 +1,838 @@
+{
+  "generations": [
+    {
+      "gen_id": "gen_0",
+      "label": "Gen-0",
+      "filename": "generation_0.zip",
+      "rating": 0.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_1",
+      "label": "Gen-1",
+      "filename": "generation_1.zip",
+      "rating": 1.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_2",
+      "label": "Gen-2",
+      "filename": "generation_2.zip",
+      "rating": 2.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_3",
+      "label": "Gen-3",
+      "filename": "generation_3.zip",
+      "rating": 3.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_4",
+      "label": "Gen-4",
+      "filename": "generation_4.zip",
+      "rating": 4.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_5",
+      "label": "Gen-5",
+      "filename": "generation_5.zip",
+      "rating": 5.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_6",
+      "label": "Gen-6",
+      "filename": "generation_6.zip",
+      "rating": 6.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_7",
+      "label": "Gen-7",
+      "filename": "generation_7.zip",
+      "rating": 7.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_8",
+      "label": "Gen-8",
+      "filename": "generation_8.zip",
+      "rating": 8.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_9",
+      "label": "Gen-9",
+      "filename": "generation_9.zip",
+      "rating": 9.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_10",
+      "label": "Gen-10",
+      "filename": "generation_10.zip",
+      "rating": 10.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_11",
+      "label": "Gen-11",
+      "filename": "generation_11.zip",
+      "rating": 11.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_12",
+      "label": "Gen-12",
+      "filename": "generation_12.zip",
+      "rating": 12.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_13",
+      "label": "Gen-13",
+      "filename": "generation_13.zip",
+      "rating": 13.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_14",
+      "label": "Gen-14",
+      "filename": "generation_14.zip",
+      "rating": 14.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_15",
+      "label": "Gen-15",
+      "filename": "generation_15.zip",
+      "rating": 15.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_16",
+      "label": "Gen-16",
+      "filename": "generation_16.zip",
+      "rating": 16.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_17",
+      "label": "Gen-17",
+      "filename": "generation_17.zip",
+      "rating": 17.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_18",
+      "label": "Gen-18",
+      "filename": "generation_18.zip",
+      "rating": 18.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_19",
+      "label": "Gen-19",
+      "filename": "generation_19.zip",
+      "rating": 19.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_20",
+      "label": "Gen-20",
+      "filename": "generation_20.zip",
+      "rating": 20.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_21",
+      "label": "Gen-21",
+      "filename": "generation_21.zip",
+      "rating": 21.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_22",
+      "label": "Gen-22",
+      "filename": "generation_22.zip",
+      "rating": 22.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_23",
+      "label": "Gen-23",
+      "filename": "generation_23.zip",
+      "rating": 23.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_24",
+      "label": "Gen-24",
+      "filename": "generation_24.zip",
+      "rating": 24.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_25",
+      "label": "Gen-25",
+      "filename": "generation_25.zip",
+      "rating": 25.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_26",
+      "label": "Gen-26",
+      "filename": "generation_26.zip",
+      "rating": 26.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_27",
+      "label": "Gen-27",
+      "filename": "generation_27.zip",
+      "rating": 27.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_28",
+      "label": "Gen-28",
+      "filename": "generation_28.zip",
+      "rating": 28.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_29",
+      "label": "Gen-29",
+      "filename": "generation_29.zip",
+      "rating": 29.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_30",
+      "label": "Gen-30",
+      "filename": "generation_30.zip",
+      "rating": 30.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_31",
+      "label": "Gen-31",
+      "filename": "generation_31.zip",
+      "rating": 31.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_32",
+      "label": "Gen-32",
+      "filename": "generation_32.zip",
+      "rating": 32.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_33",
+      "label": "Gen-33",
+      "filename": "generation_33.zip",
+      "rating": 33.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_34",
+      "label": "Gen-34",
+      "filename": "generation_34.zip",
+      "rating": 34.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_35",
+      "label": "Gen-35",
+      "filename": "generation_35.zip",
+      "rating": 35.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_36",
+      "label": "Gen-36",
+      "filename": "generation_36.zip",
+      "rating": 36.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_37",
+      "label": "Gen-37",
+      "filename": "generation_37.zip",
+      "rating": 37.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_38",
+      "label": "Gen-38",
+      "filename": "generation_38.zip",
+      "rating": 38.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_39",
+      "label": "Gen-39",
+      "filename": "generation_39.zip",
+      "rating": 39.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_40",
+      "label": "Gen-40",
+      "filename": "generation_40.zip",
+      "rating": 40.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_41",
+      "label": "Gen-41",
+      "filename": "generation_41.zip",
+      "rating": 41.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_42",
+      "label": "Gen-42",
+      "filename": "generation_42.zip",
+      "rating": 42.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_43",
+      "label": "Gen-43",
+      "filename": "generation_43.zip",
+      "rating": 43.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_44",
+      "label": "Gen-44",
+      "filename": "generation_44.zip",
+      "rating": 44.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_45",
+      "label": "Gen-45",
+      "filename": "generation_45.zip",
+      "rating": 45.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_46",
+      "label": "Gen-46",
+      "filename": "generation_46.zip",
+      "rating": 46.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_47",
+      "label": "Gen-47",
+      "filename": "generation_47.zip",
+      "rating": 47.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_48",
+      "label": "Gen-48",
+      "filename": "generation_48.zip",
+      "rating": 48.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_49",
+      "label": "Gen-49",
+      "filename": "generation_49.zip",
+      "rating": 49.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_50",
+      "label": "Gen-50",
+      "filename": "generation_50.zip",
+      "rating": 50.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_51",
+      "label": "Gen-51",
+      "filename": "generation_51.zip",
+      "rating": 51.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_52",
+      "label": "Gen-52",
+      "filename": "generation_52.zip",
+      "rating": 52.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_53",
+      "label": "Gen-53",
+      "filename": "generation_53.zip",
+      "rating": 53.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_54",
+      "label": "Gen-54",
+      "filename": "generation_54.zip",
+      "rating": 54.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_55",
+      "label": "Gen-55",
+      "filename": "generation_55.zip",
+      "rating": 55.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_56",
+      "label": "Gen-56",
+      "filename": "generation_56.zip",
+      "rating": 56.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_57",
+      "label": "Gen-57",
+      "filename": "generation_57.zip",
+      "rating": 57.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_58",
+      "label": "Gen-58",
+      "filename": "generation_58.zip",
+      "rating": 58.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_59",
+      "label": "Gen-59",
+      "filename": "generation_59.zip",
+      "rating": 59.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_60",
+      "label": "Gen-60",
+      "filename": "generation_60.zip",
+      "rating": 60.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_61",
+      "label": "Gen-61",
+      "filename": "generation_61.zip",
+      "rating": 61.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_62",
+      "label": "Gen-62",
+      "filename": "generation_62.zip",
+      "rating": 62.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_63",
+      "label": "Gen-63",
+      "filename": "generation_63.zip",
+      "rating": 63.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_64",
+      "label": "Gen-64",
+      "filename": "generation_64.zip",
+      "rating": 64.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_65",
+      "label": "Gen-65",
+      "filename": "generation_65.zip",
+      "rating": 65.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_66",
+      "label": "Gen-66",
+      "filename": "generation_66.zip",
+      "rating": 66.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_67",
+      "label": "Gen-67",
+      "filename": "generation_67.zip",
+      "rating": 67.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_68",
+      "label": "Gen-68",
+      "filename": "generation_68.zip",
+      "rating": 68.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_69",
+      "label": "Gen-69",
+      "filename": "generation_69.zip",
+      "rating": 69.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_70",
+      "label": "Gen-70",
+      "filename": "generation_70.zip",
+      "rating": 70.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_71",
+      "label": "Gen-71",
+      "filename": "generation_71.zip",
+      "rating": 71.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_72",
+      "label": "Gen-72",
+      "filename": "generation_72.zip",
+      "rating": 72.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_73",
+      "label": "Gen-73",
+      "filename": "generation_73.zip",
+      "rating": 73.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_74",
+      "label": "Gen-74",
+      "filename": "generation_74.zip",
+      "rating": 74.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_75",
+      "label": "Gen-75",
+      "filename": "generation_75.zip",
+      "rating": 75.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_76",
+      "label": "Gen-76",
+      "filename": "generation_76.zip",
+      "rating": 76.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_77",
+      "label": "Gen-77",
+      "filename": "generation_77.zip",
+      "rating": 77.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_78",
+      "label": "Gen-78",
+      "filename": "generation_78.zip",
+      "rating": 78.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_79",
+      "label": "Gen-79",
+      "filename": "generation_79.zip",
+      "rating": 79.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_80",
+      "label": "Gen-80",
+      "filename": "generation_80.zip",
+      "rating": 80.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_81",
+      "label": "Gen-81",
+      "filename": "generation_81.zip",
+      "rating": 81.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_82",
+      "label": "Gen-82",
+      "filename": "generation_82.zip",
+      "rating": 82.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_83",
+      "label": "Gen-83",
+      "filename": "generation_83.zip",
+      "rating": 83.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_84",
+      "label": "Gen-84",
+      "filename": "generation_84.zip",
+      "rating": 84.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_85",
+      "label": "Gen-85",
+      "filename": "generation_85.zip",
+      "rating": 85.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_86",
+      "label": "Gen-86",
+      "filename": "generation_86.zip",
+      "rating": 86.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_87",
+      "label": "Gen-87",
+      "filename": "generation_87.zip",
+      "rating": 87.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_88",
+      "label": "Gen-88",
+      "filename": "generation_88.zip",
+      "rating": 88.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_89",
+      "label": "Gen-89",
+      "filename": "generation_89.zip",
+      "rating": 89.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_90",
+      "label": "Gen-90",
+      "filename": "generation_90.zip",
+      "rating": 90.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_91",
+      "label": "Gen-91",
+      "filename": "generation_91.zip",
+      "rating": 91.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_92",
+      "label": "Gen-92",
+      "filename": "generation_92.zip",
+      "rating": 92.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_93",
+      "label": "Gen-93",
+      "filename": "generation_93.zip",
+      "rating": 93.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_94",
+      "label": "Gen-94",
+      "filename": "generation_94.zip",
+      "rating": 94.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_95",
+      "label": "Gen-95",
+      "filename": "generation_95.zip",
+      "rating": 95.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_96",
+      "label": "Gen-96",
+      "filename": "generation_96.zip",
+      "rating": 96.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_97",
+      "label": "Gen-97",
+      "filename": "generation_97.zip",
+      "rating": 97.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_98",
+      "label": "Gen-98",
+      "filename": "generation_98.zip",
+      "rating": 98.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_99",
+      "label": "Gen-99",
+      "filename": "generation_99.zip",
+      "rating": 99.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_100",
+      "label": "Gen-100",
+      "filename": "generation_100.zip",
+      "rating": 100.0,
+      "origin": "base_curriculum",
+      "created_at": 0
+    },
+    {
+      "gen_id": "gen_evo_101_1793889163",
+      "label": "Gen-101-H (Daniil_Commander)",
+      "filename": "generation_human_101_45.zip",
+      "rating": 45.43,
+      "origin": "player:Daniil_Commander",
+      "created_at": 1793889163
+    },
+    {
+      "gen_id": "gen_evo_102_1794571723",
+      "label": "Gen-102-H (kov)",
+      "filename": "generation_human_102_54.zip",
+      "rating": 54.38,
+      "origin": "player:kov",
+      "doctrine_alignment": 100.0,
+      "created_at": 1794571723
+    },
+    {
+      "gen_id": "gen_evo_103_1794571723",
+      "label": "Gen-102-H (kov)",
+      "filename": "generation_human_102_54.zip",
+      "rating": 54.38,
+      "origin": "player:kov",
+      "doctrine_alignment": 100.0,
+      "created_at": 1794571723
+    }
+  ]
+}
