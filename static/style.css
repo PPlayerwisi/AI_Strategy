@@ -727,6 +727,12 @@ body {
     box-shadow: 0 0 12px rgba(46, 204, 113, 0.65), 0 4px 10px rgba(0, 0, 0, 0.8);
 }
 
+.dock-circle.active-mode {
+    background: radial-gradient(circle at 35% 30%, #feca57 0%, #f39c12 75%, #d35400 100%);
+    border: 2.5px solid #ffffff;
+    box-shadow: 0 0 16px rgba(254, 202, 87, 0.95), 0 4px 10px rgba(0, 0, 0, 0.85);
+}
+
 .dock-circle.unavailable {
     background: radial-gradient(circle at 35% 30%, #eb3b5a 0%, #b33939 75%, #781e1e 100%);
     border: 2.5px solid #ff9ff3;

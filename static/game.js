@@ -11,6 +11,8 @@ let touchStartX = 0, touchStartY = 0;
 let pinchLastDist = 0;
 let chartInstance = null;
 let boardInitializedForMatch = false;
+let pendingBuildType = null;
+let towerFireArmed = false;
 
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
@@ -47,6 +49,30 @@ function isTileInList(r, c, list) {
     if (list[i][0] === r && list[i][1] === c) return true;
   }
   return false;
+}
+
+function getActiveBuildTiles() {
+  if (!state || !state.inspector || !pendingBuildType) return [];
+  if (pendingBuildType === "tower") return state.inspector.valid_tower_tiles || [];
+  if (pendingBuildType === "barracks") return state.inspector.valid_barracks_tiles || [];
+  return [];
+}
+
+function isSelectedDefenseTowerOnly() {
+  if (!state || !state.selected_pos) return false;
+  const [sr, sc] = state.selected_pos;
+  const u = state.units ? state.units.find(unit => unit.r === sr && unit.c === sc) : null;
+  if (u) return false;
+  const st = state.structs ? state.structs.find(s => s.r === sr && s.c === sc) : null;
+  return Boolean(st && st.type === 1);
+}
+
+function getVisibleAttackTiles() {
+  if (!state || !state.valid_attacks) return [];
+  if (isSelectedDefenseTowerOnly() && !towerFireArmed) {
+    return [];
+  }
+  return state.valid_attacks;
 }
 
 function clampCamera() {
@@ -108,18 +134,35 @@ canvas.addEventListener("mousedown", e => {
     const c = Math.floor((pos.x - camX) / cellSize);
     const r = Math.floor((pos.y - camY) / cellSize);
     if (r >= 0 && r < 18 && c >= 0 && c < 18) {
+      if (pendingBuildType) {
+        const bTiles = getActiveBuildTiles();
+        if (isTileInList(r, c, bTiles)) {
+          const bMode = pendingBuildType;
+          pendingBuildType = null;
+          sendAct("build", r, c, bMode);
+          return;
+        }
+        pendingBuildType = null;
+      }
+
       if (state && state.selected_pos && state.selected_pos[0] === r && state.selected_pos[1] === c) {
         state.selected_pos = null;
         state.valid_moves = [];
         state.valid_attacks = [];
+        pendingBuildType = null;
+        towerFireArmed = false;
         updateUI();
         return;
       }
+      pendingBuildType = null;
+      towerFireArmed = false;
       sendAct("select_tile", r, c);
     } else if (state) {
       state.selected_pos = null;
       state.valid_moves = [];
       state.valid_attacks = [];
+      pendingBuildType = null;
+      towerFireArmed = false;
       updateUI();
     }
   } else if (e.button === 1 || e.button === 2) {
@@ -136,7 +179,24 @@ window.addEventListener("mouseup", e => {
     const c = Math.floor((pos.x - camX) / cellSize);
     const r = Math.floor((pos.y - camY) / cellSize);
     if (r >= 0 && r < 18 && c >= 0 && c < 18) {
-      sendAct("order_tile", r, c);
+      if (pendingBuildType) {
+        const bTiles = getActiveBuildTiles();
+        if (isTileInList(r, c, bTiles)) {
+          const bMode = pendingBuildType;
+          pendingBuildType = null;
+          sendAct("build", r, c, bMode);
+        } else {
+          pendingBuildType = null;
+          updateUI();
+        }
+      } else if (isSelectedDefenseTowerOnly()) {
+        if (towerFireArmed && isTileInList(r, c, state.valid_attacks)) {
+          towerFireArmed = false;
+          sendAct("order_tile", r, c);
+        }
+      } else {
+        sendAct("order_tile", r, c);
+      }
     }
   }
   isPanning = false;
@@ -236,20 +296,39 @@ canvas.addEventListener("touchend", e => {
     const c = Math.floor((pos.x - camX) / cellSize);
     const r = Math.floor((pos.y - camY) / cellSize);
     if (r >= 0 && r < 18 && c >= 0 && c < 18) {
-      if (state && (isTileInList(r, c, state.valid_moves) || isTileInList(r, c, state.valid_attacks))) {
+      if (pendingBuildType) {
+        const bTiles = getActiveBuildTiles();
+        if (isTileInList(r, c, bTiles)) {
+          const bMode = pendingBuildType;
+          pendingBuildType = null;
+          sendAct("build", r, c, bMode);
+          return;
+        }
+        pendingBuildType = null;
+      }
+
+      const visAtks = getVisibleAttackTiles();
+      if (state && (isTileInList(r, c, state.valid_moves) || isTileInList(r, c, visAtks))) {
+        towerFireArmed = false;
         sendAct("order_tile", r, c);
       } else if (state && state.selected_pos && state.selected_pos[0] === r && state.selected_pos[1] === c) {
         state.selected_pos = null;
         state.valid_moves = [];
         state.valid_attacks = [];
+        pendingBuildType = null;
+        towerFireArmed = false;
         updateUI();
       } else {
+        pendingBuildType = null;
+        towerFireArmed = false;
         sendAct("select_tile", r, c);
       }
     } else if (state) {
       state.selected_pos = null;
       state.valid_moves = [];
       state.valid_attacks = [];
+      pendingBuildType = null;
+      towerFireArmed = false;
       updateUI();
     }
   }
@@ -473,6 +552,7 @@ function renderInspectorPanel() {
     }
 
     const hpPct = Math.max(0.0, Math.min(100.0, (u.hp / u.max_hp) * 100.0));
+    const tilesWord = isUk ? "кліт." : "tiles";
 
     cardsHtml += `
       <div class="insp-section-card">
@@ -500,16 +580,24 @@ function renderInspectorPanel() {
             <span class="insp-stat-value">${uStats.dmg.toFixed(2)} HP</span>
           </div>
           <div class="insp-stat-box">
-            <span class="insp-stat-label">${isUk ? "Рух / Дальність" : "Move / Range"}</span>
-            <span class="insp-stat-value">${uStats.move_range} / ${uStats.atk_range}</span>
+            <span class="insp-stat-label">${isUk ? "Ефективність" : "Efficiency"}</span>
+            <span class="insp-stat-value val-gold">${u.efficiency.toFixed(2)}</span>
+          </div>
+          <div class="insp-stat-box">
+            <span class="insp-stat-label">${isUk ? "Дальність руху" : "Move Range"}</span>
+            <span class="insp-stat-value">${uStats.move_range} ${tilesWord}</span>
+          </div>
+          <div class="insp-stat-box">
+            <span class="insp-stat-label">${isUk ? "Дальність атаки" : "Attack Range"}</span>
+            <span class="insp-stat-value">${uStats.atk_range} ${tilesWord}</span>
           </div>
           <div class="insp-stat-box">
             <span class="insp-stat-label">${isUk ? "Утримання" : "Upkeep"}</span>
             <span class="insp-stat-value val-neg">-${uStats.upkeep.toFixed(2)}$${isUk ? "/р" : "/r"}</span>
           </div>
           <div class="insp-stat-box">
-            <span class="insp-stat-label">${isUk ? "Ефективність" : "Efficiency"}</span>
-            <span class="insp-stat-value val-gold">${u.efficiency.toFixed(2)}</span>
+            <span class="insp-stat-label">${isUk ? "Вартість найму" : "Recruit Cost"}</span>
+            <span class="insp-stat-value val-gold">${uStats.cost.toFixed(2)}$</span>
           </div>
           <div class="insp-stat-box full-row">
             <span class="insp-stat-label">${isUk ? "Повернення при розпуску" : "Disband Refund"}</span>
@@ -571,6 +659,7 @@ function renderInspectorPanel() {
     const sCol = factionColors[st.owner] || "#0fbcf9";
     const fCtrl = (state.factions && state.factions[String(st.owner)]) ? state.factions[String(st.owner)].controller : `F${st.owner}`;
     const hpPct = Math.max(0.0, Math.min(100.0, (st.hp / sConfig.max_hp) * 100.0));
+    const tilesWord = isUk ? "кліт." : "tiles";
 
     cardsHtml += `
       <div class="insp-section-card">
@@ -596,9 +685,14 @@ function renderInspectorPanel() {
             <span class="insp-stat-value val-gold">${sConfig.cost.toFixed(2)}$</span>
           </div>
           <div class="insp-stat-box">
-            <span class="insp-stat-label">${st.type === 1 ? (isUk ? "Обстріл (Дальність)" : "Fire (Range)") : (isUk ? "Призначення" : "Function")}</span>
-            <span class="insp-stat-value">${st.type === 1 ? `${sConfig.dmg.toFixed(2)} HP (${sConfig.atk_range})` : (isUk ? "Найм військ" : "Unit Spawn")}</span>
+            <span class="insp-stat-label">${st.type === 1 ? (isUk ? "Шкода пострілу" : "Fire Damage") : (isUk ? "Призначення" : "Function")}</span>
+            <span class="insp-stat-value">${st.type === 1 ? `${sConfig.dmg.toFixed(2)} HP` : (isUk ? "Найм військ" : "Unit Spawn")}</span>
           </div>
+          ${st.type === 1 ? `
+          <div class="insp-stat-box full-row">
+            <span class="insp-stat-label">${isUk ? "Дальність обстрілу" : "Attack Range"}</span>
+            <span class="insp-stat-value">${sConfig.atk_range} ${tilesWord}</span>
+          </div>` : ""}
           <div class="insp-stat-box full-row">
             <span class="insp-stat-label">${isUk ? "Повернення при знесенні" : "Demolish Refund"}</span>
             <span class="insp-stat-value val-pos">+${sRefund.toFixed(2)}$ (${sRefundPct.toFixed(2)}% / ${sConfig.cost.toFixed(2)}$)</span>
@@ -680,12 +774,21 @@ function renderActionDock() {
     const isMyUnit = (selectedUnit.faction === state.my_faction);
     const disRefund = insp.disband_refund_val > 0 ? `+${insp.disband_refund_val.toFixed(2)}$` : "";
     const demRefund = insp.demolish_refund_val > 0 ? `+${insp.demolish_refund_val.toFixed(2)}$` : "";
+    const rawHeal = selectedUnit.max_hp * 0.25;
+    const effHeal = selectedUnit.hp < selectedUnit.max_hp
+      ? Math.min(selectedUnit.max_hp - selectedUnit.hp, rawHeal)
+      : rawHeal;
+    const healTitle = (t.dockHeal || "Heal").split("+")[0].trim();
 
     items.push({
       icon: DOCK_ICONS.heal,
-      label: t.dockHeal || "Heal",
+      label: `${healTitle} +${effHeal.toFixed(2)} HP`,
       available: Boolean(turnActive && isMyUnit && insp.can_heal),
-      onClick: () => sendAct("heal")
+      activeMode: false,
+      onClick: () => {
+        pendingBuildType = null;
+        sendAct("heal");
+      }
     });
 
     if (selectedUnit.type === "worker") {
@@ -693,25 +796,41 @@ function renderActionDock() {
         icon: DOCK_ICONS.harvest,
         label: t.dockHarv || "Harvest",
         available: Boolean(turnActive && isMyUnit && insp.can_harvest),
-        onClick: () => sendAct("harvest")
+        activeMode: false,
+        onClick: () => {
+          pendingBuildType = null;
+          sendAct("harvest");
+        }
       });
       items.push({
         icon: DOCK_ICONS.tower,
         label: t.dockTow || "Tower (4$)",
         available: Boolean(turnActive && isMyUnit && insp.can_build_tower),
-        onClick: () => sendAct("build", null, null, "tower")
+        activeMode: (pendingBuildType === "tower"),
+        onClick: () => {
+          pendingBuildType = (pendingBuildType === "tower" ? null : "tower");
+          updateUI();
+        }
       });
       items.push({
         icon: DOCK_ICONS.barracks,
         label: t.dockBar || "Barracks (5$)",
         available: Boolean(turnActive && isMyUnit && insp.can_build_barracks),
-        onClick: () => sendAct("build", null, null, "barracks")
+        activeMode: (pendingBuildType === "barracks"),
+        onClick: () => {
+          pendingBuildType = (pendingBuildType === "barracks" ? null : "barracks");
+          updateUI();
+        }
       });
       items.push({
         icon: DOCK_ICONS.demolish,
         label: `${t.dockDem || "Demolish"} ${demRefund}`.trim(),
         available: Boolean(turnActive && isMyUnit && insp.can_demolish),
-        onClick: () => sendAct("demolish")
+        activeMode: false,
+        onClick: () => {
+          pendingBuildType = null;
+          sendAct("demolish");
+        }
       });
     }
 
@@ -719,7 +838,11 @@ function renderActionDock() {
       icon: DOCK_ICONS.disband,
       label: `${t.dockDis || "Disband"} ${disRefund}`.trim(),
       available: Boolean(turnActive && isMyUnit && insp.can_disband),
-      onClick: () => sendAct("disband")
+      activeMode: false,
+      onClick: () => {
+        pendingBuildType = null;
+        sendAct("disband");
+      }
     });
   } else if (isCastle || (selectedStruct && selectedStruct.type === 2)) {
     const isMySpawner = isCastle ? (castleOwner === state.my_faction) : (selectedStruct.owner === state.my_faction);
@@ -727,18 +850,21 @@ function renderActionDock() {
       icon: DOCK_ICONS.worker,
       label: t.dockSwk || "Worker (3$)",
       available: Boolean(turnActive && isMySpawner && insp.can_spawn_worker),
+      activeMode: false,
       onClick: () => sendAct("spawn", null, null, "worker")
     });
     items.push({
       icon: DOCK_ICONS.warrior,
       label: t.dockSwr || "Warrior (6$)",
       available: Boolean(turnActive && isMySpawner && insp.can_spawn_warrior),
+      activeMode: false,
       onClick: () => sendAct("spawn", null, null, "warrior")
     });
     items.push({
       icon: DOCK_ICONS.archer,
       label: t.dockSar || "Archer (8.5$)",
       available: Boolean(turnActive && isMySpawner && insp.can_spawn_archer),
+      activeMode: false,
       onClick: () => sendAct("spawn", null, null, "archer")
     });
   } else if (selectedStruct && selectedStruct.type === 1) {
@@ -749,14 +875,19 @@ function renderActionDock() {
       state.valid_attacks &&
       state.valid_attacks.length > 0
     );
+    if (!canFire) {
+      towerFireArmed = false;
+    }
+    const cleanFireLabel = (t.dockTowerFire || "Fire").replace("(RMB)", "").replace("(ПКМ)", "").trim();
     items.push({
       icon: DOCK_ICONS.fire,
-      label: t.dockTowerFire || "Fire (RMB)",
+      label: cleanFireLabel,
       available: canFire,
+      activeMode: Boolean(canFire && towerFireArmed),
       onClick: () => {
-        if (canFire && state.valid_attacks.length > 0) {
-          const [tr, tc] = state.valid_attacks[0];
-          sendAct("order_tile", tr, tc);
+        if (canFire) {
+          towerFireArmed = !towerFireArmed;
+          updateUI();
         }
       }
     });
@@ -772,8 +903,11 @@ function renderActionDock() {
   for (const item of items) {
     const wrap = document.createElement("div");
     wrap.className = "dock-item";
+    const circleClass = item.available
+      ? (item.activeMode ? "dock-circle available active-mode" : "dock-circle available")
+      : "dock-circle unavailable";
     wrap.innerHTML = `
-      <div class="dock-circle ${item.available ? 'available' : 'unavailable'}">${item.icon}</div>
+      <div class="${circleClass}">${item.icon}</div>
       <div class="dock-label">${item.label}</div>
     `;
     wrap.addEventListener("click", e => {
@@ -891,6 +1025,8 @@ async function roomAction(action, extra = {}) {
     }
     if (action === "start" || action === "rematch") {
       boardInitializedForMatch = false;
+      pendingBuildType = null;
+      towerFireArmed = false;
     }
     state = data.state;
     updateUI();
@@ -920,6 +1056,8 @@ async function joinRoom(rid, isPriv) {
     pass = prompt("Enter room password:") || "";
   }
   boardInitializedForMatch = false;
+  pendingBuildType = null;
+  towerFireArmed = false;
   await roomAction("join", { room_id: rid, password: pass });
 }
 
@@ -966,6 +1104,8 @@ function updateUI() {
     lobbyPanel.style.display = "grid";
     roomLobbyPanel.style.display = "none";
     gamePanel.style.display = "none";
+    pendingBuildType = null;
+    towerFireArmed = false;
     renderActionDock();
 
     const listCont = document.getElementById("rooms-list-container");
@@ -992,6 +1132,8 @@ function updateUI() {
     lobbyPanel.style.display = "none";
     roomLobbyPanel.style.display = "flex";
     gamePanel.style.display = "none";
+    pendingBuildType = null;
+    towerFireArmed = false;
     renderActionDock();
 
     const rm = state.room;
@@ -1040,6 +1182,10 @@ function updateUI() {
 
     if (switchedToGame) {
       resizeCanvas();
+    }
+
+    if (pendingBuildType && getActiveBuildTiles().length === 0) {
+      pendingBuildType = null;
     }
 
     const bannerEl = document.getElementById("turn-status-banner");
@@ -1132,6 +1278,42 @@ function drawUnitIcon(cx, cy, rad, uType, faction) {
     ctx.lineTo(cx + rad * 0.5, cy);
     ctx.stroke();
   }
+  ctx.restore();
+}
+
+function drawStructurePreviewIcon(x, y, cs, bMode) {
+  ctx.save();
+  ctx.globalAlpha = 0.58;
+  ctx.fillStyle = "#2ecc71";
+  ctx.fillRect(x + cs * 0.14, y + cs * 0.18, cs * 0.72, cs * 0.68);
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x + cs * 0.14, y + cs * 0.18, cs * 0.72, cs * 0.68);
+
+  ctx.globalAlpha = 0.92;
+  ctx.fillStyle = "#ffffff";
+  if (bMode === "tower") {
+    const bw = cs * 0.12;
+    ctx.fillRect(x + cs * 0.22, y + cs * 0.22, bw, cs * 0.12);
+    ctx.fillRect(x + cs * 0.44, y + cs * 0.22, bw, cs * 0.12);
+    ctx.fillRect(x + cs * 0.66, y + cs * 0.22, bw, cs * 0.12);
+    ctx.fillRect(x + cs * 0.28, y + cs * 0.34, cs * 0.44, cs * 0.42);
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(x + cs * 0.5, y + cs * 0.24);
+    ctx.lineTo(x + cs * 0.22, y + cs * 0.48);
+    ctx.lineTo(x + cs * 0.78, y + cs * 0.48);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillRect(x + cs * 0.28, y + cs * 0.48, cs * 0.44, cs * 0.30);
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = "#00ffaa";
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([4, 3]);
+  ctx.strokeRect(x + 2, y + 2, cs - 4, cs - 4);
   ctx.restore();
 }
 
@@ -1235,22 +1417,32 @@ function drawBoard() {
     }
   }
 
-  for (const [mr, mc] of state.valid_moves) {
-    const x = ox + mc * cs, y = oy + mr * cs;
-    ctx.strokeStyle = "#f1c40f";
-    ctx.lineWidth = 2.5;
-    ctx.strokeRect(x + 2, y + 2, cs - 4, cs - 4);
-    ctx.fillStyle = "#f1c40f";
-    ctx.beginPath();
-    ctx.arc(x + cs * 0.5, y + cs * 0.5, Math.max(3, cs * 0.1), 0, Math.PI * 2);
-    ctx.fill();
+  if (!pendingBuildType) {
+    for (const [mr, mc] of state.valid_moves) {
+      const x = ox + mc * cs, y = oy + mr * cs;
+      ctx.strokeStyle = "#f1c40f";
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(x + 2, y + 2, cs - 4, cs - 4);
+      ctx.fillStyle = "#f1c40f";
+      ctx.beginPath();
+      ctx.arc(x + cs * 0.5, y + cs * 0.5, Math.max(3, cs * 0.1), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const visAtks = getVisibleAttackTiles();
+    for (const [tr, tc] of visAtks) {
+      const x = ox + tc * cs, y = oy + tr * cs;
+      ctx.strokeStyle = "#e056fd";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(x + 2, y + 2, cs - 4, cs - 4);
+    }
   }
 
-  for (const [tr, tc] of state.valid_attacks) {
-    const x = ox + tc * cs, y = oy + tr * cs;
-    ctx.strokeStyle = "#e056fd";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(x + 2, y + 2, cs - 4, cs - 4);
+  if (pendingBuildType) {
+    const bTiles = getActiveBuildTiles();
+    for (const [br, bc] of bTiles) {
+      drawStructurePreviewIcon(ox + bc * cs, oy + br * cs, cs, pendingBuildType);
+    }
   }
 
   const minEff = (state.config && state.config.min_training_eff) ? state.config.min_training_eff : 100.0;
