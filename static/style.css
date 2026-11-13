@@ -29,7 +29,6 @@ body {
     overscroll-behavior: none;
 }
 
-/* ================= АВТОРИЗАЦІЯ ================= */
 #auth-screen {
     position: fixed;
     top: 0;
@@ -138,14 +137,12 @@ body {
     min-height: 18px;
 }
 
-/* ================= ГОЛОВНИЙ КОНТЕЙНЕР (МЕНЮ vs ГРА) ================= */
 #app-container {
     display: flex;
     width: 100%;
     height: 100%;
 }
 
-/* Режим центрованого меню */
 #app-container.mode-menu {
     justify-content: center;
     align-items: center;
@@ -153,7 +150,8 @@ body {
     overflow-y: auto;
 }
 
-#app-container.mode-menu #left-pane {
+#app-container.mode-menu #left-pane,
+#app-container.mode-menu #inspector-pane {
     display: none !important;
 }
 
@@ -206,29 +204,39 @@ body {
     margin-top: 14px;
 }
 
-/* Режим гри: квадратне поле + широка панель з 4 квадратами телеметрії */
 #app-container.mode-game {
     flex-direction: row;
-    justify-content: center;
+    justify-content: flex-start;
     align-items: stretch;
     width: 100%;
     height: 100%;
 }
 
 #app-container.mode-game #left-pane {
-    flex: 1 1 auto;
-    background: #0d1217;
+    flex: 0 0 auto;
+    background: #0a0e13;
     display: flex;
-    justify-content: center;
+    justify-content: flex-start;
     align-items: center;
     position: relative;
     overflow: hidden;
+    border-right: 2px solid #253342;
+}
+
+#app-container.mode-game #inspector-pane {
+    flex: 1 1 280px;
+    min-width: clamp(240px, 20vw, 380px);
+    background: #131b23;
+    border-right: 2px solid #2f3640;
+    display: flex;
+    flex-direction: column;
+    padding: clamp(10px, 1.4vmin, 18px);
+    overflow-y: auto;
 }
 
 #app-container.mode-game #right-pane {
-    flex: 0 0 clamp(370px, 34vw, 620px);
+    flex: 0 0 clamp(360px, 31vw, 560px);
     background: var(--bg-panel);
-    border-left: 2px solid #2f3640;
     display: flex;
     flex-direction: column;
     padding: clamp(8px, 1.2vmin, 14px);
@@ -241,10 +249,232 @@ body {
     user-select: none;
     -webkit-user-select: none;
     display: block;
-    box-shadow: 0 0 28px rgba(0, 0, 0, 0.85);
 }
 
-/* ================= 4 СТАТИЧНИХ КВАДРАТИ ТЕЛЕМЕТРІЇ ФРАКЦІЙ ================= */
+.inspector-panel-card {
+    background: var(--bg-card);
+    border: 1.5px solid var(--border-blue);
+    border-radius: 10px;
+    padding: clamp(12px, 1.6vmin, 18px);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.35);
+}
+
+.inspector-main-title {
+    font-size: clamp(12px, 1.4vmin, 15px) !important;
+    border-bottom: 1.5px solid rgba(60, 99, 130, 0.5);
+    padding-bottom: 8px;
+    margin-bottom: 12px !important;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.inspector-rich-body {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(10px, 1.4vmin, 14px);
+    flex: 1;
+}
+
+.insp-empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    color: var(--text-muted);
+    padding: 20px 12px;
+    border: 1.5px dashed #32465a;
+    border-radius: 8px;
+    background: rgba(15, 20, 26, 0.45);
+}
+
+.insp-empty-icon {
+    width: clamp(44px, 5.5vmin, 62px);
+    height: clamp(44px, 5.5vmin, 62px);
+    margin-bottom: 12px;
+    opacity: 0.55;
+    fill: var(--accent-cyan);
+}
+
+.insp-empty-title {
+    font-size: clamp(13px, 1.5vmin, 16px);
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 6px;
+}
+
+.insp-empty-sub {
+    font-size: clamp(11px, 1.25vmin, 13px);
+    line-height: 1.45;
+}
+
+.insp-section-card {
+    background: linear-gradient(160deg, #19232e 0%, #121921 100%);
+    border: 1px solid #354c63;
+    border-radius: 8px;
+    padding: clamp(10px, 1.3vmin, 14px);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.insp-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.insp-entity-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.insp-avatar {
+    width: clamp(38px, 4.4vmin, 48px);
+    height: clamp(38px, 4.4vmin, 48px);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid #feca57;
+    flex-shrink: 0;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.6);
+}
+
+.insp-avatar svg {
+    width: 68%;
+    height: 68%;
+    fill: #fff;
+    stroke: #fff;
+}
+
+.insp-title-block {
+    display: flex;
+    flex-direction: column;
+}
+
+.insp-entity-name {
+    font-size: clamp(13px, 1.5vmin, 16px);
+    font-weight: 800;
+    color: #ffffff;
+}
+
+.insp-entity-sub {
+    font-size: clamp(10.5px, 1.2vmin, 12.5px);
+    color: var(--accent-cyan);
+    font-weight: 600;
+}
+
+.insp-coord-pill {
+    font-family: 'Consolas', monospace;
+    font-size: clamp(11px, 1.25vmin, 13px);
+    font-weight: 700;
+    color: var(--accent-gold);
+    background: rgba(254, 202, 87, 0.14);
+    border: 1px solid rgba(254, 202, 87, 0.4);
+    padding: 2px 8px;
+    border-radius: 5px;
+}
+
+.insp-status-badge {
+    display: inline-block;
+    font-size: clamp(9.5px, 1.1vmin, 11px);
+    font-weight: 800;
+    padding: 3px 8px;
+    border-radius: 5px;
+    text-transform: uppercase;
+    text-align: center;
+}
+
+.status-badge-ready {
+    background: rgba(46, 204, 113, 0.2);
+    color: #2ecc71;
+    border: 1px solid #2ecc71;
+}
+
+.status-badge-atk {
+    background: rgba(224, 86, 253, 0.2);
+    color: #e056fd;
+    border: 1px solid #e056fd;
+}
+
+.status-badge-done {
+    background: rgba(131, 149, 167, 0.2);
+    color: #8395a7;
+    border: 1px solid #576574;
+}
+
+.insp-hp-wrap {
+    background: #0b1015;
+    border: 1px solid #2f4256;
+    border-radius: 6px;
+    height: clamp(18px, 2vmin, 22px);
+    position: relative;
+    overflow: hidden;
+}
+
+.insp-hp-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #10ac84, #2ecc71);
+    transition: width 0.22s ease;
+}
+
+.insp-hp-text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Consolas', monospace;
+    font-size: clamp(10px, 1.15vmin, 12px);
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 2px #000;
+}
+
+.insp-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+}
+
+.insp-stat-box {
+    background: rgba(11, 16, 21, 0.72);
+    border: 1px solid rgba(60, 99, 130, 0.4);
+    border-radius: 6px;
+    padding: 5px 8px;
+    display: flex;
+    flex-direction: column;
+}
+
+.insp-stat-box.full-row {
+    grid-column: span 2;
+}
+
+.insp-stat-label {
+    font-size: clamp(9px, 1vmin, 10.5px);
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.insp-stat-value {
+    font-family: 'Consolas', monospace;
+    font-size: clamp(11px, 1.3vmin, 13.5px);
+    font-weight: 700;
+    color: #ffffff;
+    margin-top: 1px;
+}
+
 .match-overview-box {
     padding: 7px 10px !important;
     margin-bottom: 8px !important;
@@ -270,7 +500,7 @@ body {
     grid-template-rows: repeat(2, 1fr);
     gap: clamp(8px, 1.1vmin, 12px);
     flex: 1;
-    min-height: 250px;
+    min-height: 240px;
     margin-bottom: 8px;
 }
 
@@ -314,26 +544,8 @@ body {
 }
 
 .faction-square.empty-slot {
-    background: rgba(16, 22, 29, 0.45);
+    background: rgba(16, 22, 29, 0.35);
     border: 1.5px dashed #2c3e50;
-    justify-content: center;
-    align-items: center;
-    text-align: center;
-    color: #576574;
-}
-
-.empty-slot-placeholder {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    font-size: clamp(11px, 1.2vmin, 13px);
-    font-weight: 600;
-}
-
-.empty-slot-icon {
-    font-size: clamp(18px, 2.2vmin, 24px);
-    opacity: 0.45;
 }
 
 .f-sq-header {
@@ -456,69 +668,6 @@ body {
     color: #feca57 !important;
 }
 
-/* ================= ПЛАВАЮЧИЙ ІНСПЕКТОР ОБ'ЄКТА БІЛЯ КЛІТИНКИ ================= */
-.floating-inspector {
-    position: absolute;
-    top: 12px;
-    left: 12px;
-    width: clamp(210px, 23vmin, 265px);
-    background: rgba(16, 23, 31, 0.93);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    border: 1.5px solid var(--accent-cyan);
-    border-radius: 10px;
-    padding: 9px 11px;
-    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.85);
-    pointer-events: none !important;
-    z-index: 35;
-    transition: opacity 0.14s ease, left 0.12s ease, top 0.12s ease;
-}
-
-.floating-inspector.hidden {
-    opacity: 0;
-    visibility: hidden;
-}
-
-.fi-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid rgba(60, 99, 130, 0.55);
-    padding-bottom: 4px;
-    margin-bottom: 5px;
-    gap: 6px;
-}
-
-.fi-title {
-    font-size: clamp(11.5px, 1.3vmin, 13.5px);
-    font-weight: 800;
-    color: var(--accent-gold);
-}
-
-.fi-coord {
-    font-family: 'Consolas', monospace;
-    font-size: 10.5px;
-    color: var(--accent-cyan);
-    background: rgba(10, 189, 227, 0.14);
-    padding: 1px 5px;
-    border-radius: 4px;
-}
-
-.fi-body {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    font-family: 'Consolas', monospace;
-    font-size: clamp(10px, 1.15vmin, 11.8px);
-    color: #d2dae2;
-    line-height: 1.32;
-}
-
-.fi-line {
-    word-break: break-word;
-}
-
-/* ================= СПЛИВАЮЧА ПАНЕЛЬ КРУГЛИХ ДІЙ (ACTION DOCK) ================= */
 .action-dock {
     position: absolute;
     left: 50%;
@@ -606,7 +755,6 @@ body {
     text-shadow: 0 1px 2px #000;
 }
 
-/* ================= ЗАГАЛЬНІ КАРТКИ ТА КНОПКИ ПАНЕЛІ ================= */
 .box {
     background: var(--bg-card);
     border: 1px solid var(--border-blue);
@@ -868,7 +1016,6 @@ body {
     flex-wrap: wrap;
 }
 
-/* ================= МОДАЛЬНІ ВІКНА ================= */
 #modal-overlay,
 #guide-overlay {
     position: fixed;
@@ -967,7 +1114,6 @@ body {
     line-height: 1.4;
 }
 
-/* ================= АДАПТАЦІЯ ДЛЯ ТЕЛЕФОНІВ (<= 900px) ================= */
 @media (max-width: 900px) {
     .menu-grid-layout {
         grid-template-columns: 1fr;
@@ -975,23 +1121,32 @@ body {
 
     #app-container.mode-game {
         flex-direction: column;
+        overflow-y: auto;
     }
 
     #app-container.mode-game #left-pane {
         width: 100%;
-        height: 52vh;
-        height: 52dvh;
+        height: 50vh;
+        height: 50dvh;
         flex: none;
+        justify-content: center;
+        border-right: none;
+        border-bottom: 2px solid var(--border-blue);
+    }
+
+    #app-container.mode-game #inspector-pane {
+        width: 100%;
+        min-width: 100%;
+        flex: none;
+        border-right: none;
+        border-bottom: 2px solid var(--border-blue);
+        padding: 8px 10px;
     }
 
     #app-container.mode-game #right-pane {
         width: 100%;
-        height: 48vh;
-        height: 48dvh;
         flex: none;
-        border-left: none;
-        border-top: 2px solid var(--border-blue);
-        padding: 6px 8px;
+        padding: 8px 10px;
     }
 
     .factions-grid-4 {
@@ -1017,10 +1172,5 @@ body {
     .dock-label {
         font-size: 9.5px;
         padding: 1px 4px;
-    }
-
-    .floating-inspector {
-        width: 195px;
-        padding: 6px 8px;
     }
 }

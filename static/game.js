@@ -20,12 +20,15 @@ const DOCK_ICONS = {
   harvest: `<svg viewBox="0 0 24 24"><path d="M12 2L4 9l8 13 8-13-8-7zm0 3.2L16.6 9 12 16.8 7.4 9 12 5.2z"/></svg>`,
   tower: `<svg viewBox="0 0 24 24"><path d="M5 3h3v3h2V3h4v3h2V3h3v6l-2 2v10H7V11L5 9V3zm5 10v5h4v-5h-4z"/></svg>`,
   barracks: `<svg viewBox="0 0 24 24"><path d="M12 3L2 11h3v9h5v-6h4v6h5v-9h3L12 3zm0 4.5l3 2.5H9l3-2.5z"/></svg>`,
+  castle: `<svg viewBox="0 0 24 24"><path d="M3 3h3v3h2V3h3v3h2V3h3v3h2V3h3v7l-2 2v9H5v-9L3 10V3zm7 11v7h4v-7h-4z"/></svg>`,
   demolish: `<svg viewBox="0 0 24 24"><path d="M13 2l-2 6-6-2 4 5-5 4 6 1-1 6 4-5 5 4-1-6 6-2-5-4 2-5-6 2-1-4z"/></svg>`,
   disband: `<svg viewBox="0 0 24 24"><path d="M12 2C7.5 2 4 5.5 4 10c0 2.8 1.5 5.2 3.8 6.6L8 21h8l.2-4.4C18.5 15.2 20 12.8 20 10c0-4.5-3.5-8-8-8zm-3 8a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm6 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm-5 5h4v2h-4v-2z"/></svg>`,
   worker: `<svg viewBox="0 0 24 24"><path d="M15.5 4l4.5 4.5-2.8 2.8-1.7-1.7-8.5 8.5-2.1-2.1 8.5-8.5-1.7-1.7L15.5 4z"/></svg>`,
   warrior: `<svg viewBox="0 0 24 24"><path d="M19 3l2 2-10 10 2 2-1.5 1.5-2.5-2.5-4 4L3 18l4-4-2.5-2.5L6 10l2 2L18 2l1 1z"/></svg>`,
   archer: `<svg viewBox="0 0 24 24"><path d="M4 4c7 1 14 8 15 15h-2c-1-6-7-12-13-13V4zm15 1L7 17l-2-2L17 3l2 2z"/></svg>`,
-  fire: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="#fff" stroke-width="2.2"/><circle cx="12" cy="12" r="2.5"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4" stroke="#fff" stroke-width="2.2"/></svg>`
+  fire: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="#fff" stroke-width="2.2"/><circle cx="12" cy="12" r="2.5"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4" stroke="#fff" stroke-width="2.2"/></svg>`,
+  land: `<svg viewBox="0 0 24 24"><path d="M12 3L2 9l10 6 10-6-10-6zm0 10.5l-7.5-4.5L2 10.5l10 6 10-6-2.5-1.5L12 13.5zm0 4.5l-7.5-4.5L2 15l10 6 10-6-2.5-1.5L12 18z"/></svg>`,
+  mountain: `<svg viewBox="0 0 24 24"><path d="M14 6l-3.8 5 2.9 3.8-1.6 1.2L7 10 1 18h22L14 6z"/></svg>`
 };
 
 function getCanvasCoords(e) {
@@ -60,11 +63,26 @@ function clampCamera() {
 
 function resizeCanvas() {
   const pane = document.getElementById("left-pane");
-  if (!pane || pane.style.display === "none") return;
-  const rect = pane.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) return;
+  const appCont = document.getElementById("app-container");
+  if (!pane || !appCont || !appCont.classList.contains("mode-game")) return;
 
-  const side = Math.max(260, Math.floor(Math.min(rect.width - 4, rect.height - 4)));
+  let side = 320;
+  if (window.innerWidth > 900) {
+    const rightPane = document.getElementById("right-pane");
+    const rightW = rightPane ? rightPane.offsetWidth : 440;
+    const minInspW = Math.max(240, Math.floor(window.innerWidth * 0.18));
+    const availW = Math.max(280, window.innerWidth - rightW - minInspW);
+    const availH = Math.max(280, window.innerHeight);
+    side = Math.floor(Math.min(availW, availH));
+    pane.style.width = `${side}px`;
+    pane.style.height = `${window.innerHeight}px`;
+  } else {
+    pane.style.width = "100%";
+    pane.style.height = "";
+    const rect = pane.getBoundingClientRect();
+    side = Math.max(240, Math.floor(Math.min(rect.width - 2, rect.height - 2)));
+  }
+
   const prevMin = minCellSize;
   canvas.width = side;
   canvas.height = side;
@@ -78,7 +96,6 @@ function resizeCanvas() {
   }
   clampCamera();
   drawBoard();
-  positionFloatingInspector();
 }
 
 window.addEventListener("resize", resizeCanvas);
@@ -140,7 +157,6 @@ canvas.addEventListener("mousemove", e => {
     panStartY = pos.y;
     clampCamera();
     drawBoard();
-    positionFloatingInspector();
   }
 });
 
@@ -156,7 +172,6 @@ canvas.addEventListener("wheel", e => {
   camY = pos.y - (pos.y - camY) * ratio;
   clampCamera();
   drawBoard();
-  positionFloatingInspector();
 }, { passive: false });
 
 canvas.addEventListener("touchstart", e => {
@@ -192,7 +207,6 @@ canvas.addEventListener("touchmove", e => {
       touchStartY = pos.y;
       clampCamera();
       drawBoard();
-      positionFloatingInspector();
     }
   } else if (touchMode === "pinch" && e.touches.length === 2) {
     const p1 = getTouchCanvasCoords(e.touches[0]);
@@ -210,7 +224,6 @@ canvas.addEventListener("touchmove", e => {
       camY = midY - (midY - camY) * ratio;
       clampCamera();
       drawBoard();
-      positionFloatingInspector();
     }
     pinchLastDist = dist;
   }
@@ -280,6 +293,7 @@ function applyStaticLabels(t) {
   document.getElementById("btn-leave-room").textContent = t.btnLeaveRoom;
 
   document.getElementById("lbl-box-telemetry").textContent = t.boxTelemetry;
+  document.getElementById("lbl-box-inspector").textContent = t.boxInspector;
   document.getElementById("b-stats").textContent = t.btnStats;
   document.getElementById("b-end").textContent = t.btnEnd;
   document.getElementById("b-surrender").textContent = t.btnSurrender || "Surrender";
@@ -368,105 +382,265 @@ function renderFactionsGrid() {
   }
 }
 
-function renderFloatingInspector() {
-  const flEl = document.getElementById("floating-inspector");
-  if (!flEl) return;
+function renderInspectorPanel() {
+  const cont = document.getElementById("inspector-rich-content");
+  if (!cont || !state || state.screen !== "game") return;
 
-  if (!state || state.screen !== "game" || !state.selected_pos || !state.inspector || !state.inspector.lines) {
-    flEl.classList.add("hidden");
+  const isUk = (currentLang === "uk");
+  const factionColors = { 1: "#eb3b5a", 2: "#0fbcf9", 3: "#2ecc71", 4: "#feca57" };
+
+  if (!state.selected_pos) {
+    const emptyTitle = isUk ? "Об'єкт не обрано" : "No Object Selected";
+    const emptySub = isUk
+      ? "Натисніть ЛКМ (або тапніть) по будь-якій клітинці, юніту, вежі, казармі чи замку, щоб переглянути детальні характеристики та відкрити панель наказів."
+      : "Left-click (or tap) any tile, unit, tower, barracks, or castle to inspect detailed statistics and open the tactical command dock.";
+    cont.innerHTML = `
+      <div class="insp-empty-state">
+        <div class="insp-empty-icon">${DOCK_ICONS.land}</div>
+        <div class="insp-empty-title">${emptyTitle}</div>
+        <div class="insp-empty-sub">${emptySub}</div>
+      </div>
+    `;
     return;
   }
 
   const [sr, sc] = state.selected_pos;
-  const lines = state.inspector.lines;
-  const headerTitle = state.ui_text ? (state.ui_text.boxInspector.split("(")[0].trim()) : "INSPECTOR";
+  const tType = state.terrain[sr][sc];
+  const owner = state.territory[sr][sc];
+  const effVal = state.eff_yields[sr][sc];
+  const baseValues = { 0: 0.0, 1: 0.05, 2: 0.15, 3: 0.35 };
+  const baseVal = baseValues[tType] !== undefined ? baseValues[tType] : 0.0;
 
-  const bodyHtml = lines.map(line => `<div class="fi-line">${line}</div>`).join("");
-  flEl.innerHTML = `
-    <div class="fi-header">
-      <span class="fi-title">${headerTitle}</span>
-      <span class="fi-coord">(${sr}, ${sc})</span>
-    </div>
-    <div class="fi-body">${bodyHtml}</div>
-  `;
-  flEl.classList.remove("hidden");
-  positionFloatingInspector();
-}
+  const terrainNamesUk = { 0: "Скелі (Непрохідні)", 1: "Рівнина", 2: "Родючі землі", 3: "Золота жила" };
+  const terrainNamesEn = { 0: "Mountains (Impassable)", 1: "Plains", 2: "Fertile Land", 3: "Gold Vein" };
+  const terrainName = isUk ? terrainNamesUk[tType] : terrainNamesEn[tType];
 
-function positionFloatingInspector() {
-  const flEl = document.getElementById("floating-inspector");
-  const pane = document.getElementById("left-pane");
-  if (!flEl || !pane || flEl.classList.contains("hidden") || !state || !state.selected_pos) return;
-
-  const [sr, sc] = state.selected_pos;
-  let minR = sr, maxR = sr, minC = sc, maxC = sc;
-
-  const activeTiles = [
-    ...(state.valid_moves || []),
-    ...(state.valid_attacks || [])
-  ];
-  for (const [r, c] of activeTiles) {
-    if (r < minR) minR = r;
-    if (r > maxR) maxR = r;
-    if (c < minC) minC = c;
-    if (c > maxC) maxC = c;
+  let ownerLabel = isUk ? "Нейтральна територія" : "Neutral Territory";
+  let ownerColor = "#8395a7";
+  if (owner > 0 && state.factions && state.factions[String(owner)]) {
+    const fd = state.factions[String(owner)];
+    ownerLabel = `F${owner}: ${fd.controller}`;
+    ownerColor = factionColors[owner] || "#0abde3";
   }
 
-  const cLeft = canvas.offsetLeft;
-  const cTop = canvas.offsetTop;
+  const selectedUnit = state.units ? state.units.find(u => u.r === sr && u.c === sc) : null;
+  const selectedStruct = state.structs ? state.structs.find(s => s.r === sr && s.c === sc) : null;
 
-  const zoneLeft = cLeft + camX + minC * cellSize;
-  const zoneRight = cLeft + camX + (maxC + 1.0) * cellSize;
-  const zoneTop = cTop + camY + minR * cellSize;
-  const zoneBottom = cTop + camY + (maxR + 1.0) * cellSize;
-
-  const tileCenterX = cLeft + camX + (sc + 0.5) * cellSize;
-  const tileCenterY = cTop + camY + (sr + 0.5) * cellSize;
-
-  const boxW = flEl.offsetWidth || 235;
-  const boxH = flEl.offsetHeight || 125;
-  const paneW = pane.clientWidth;
-  const paneH = pane.clientHeight;
-
-  const isMobile = window.innerWidth <= 900;
-  const topSafe = isMobile ? 74.0 : 10.0;
-  const bottomSafe = isMobile ? 10.0 : 78.0;
-  const gap = 12.0;
-
-  const clampX = x => Math.max(8.0, Math.min(paneW - boxW - 8.0, x));
-  const clampY = y => Math.max(topSafe, Math.min(paneH - boxH - bottomSafe, y));
-
-  const candidates = [
-    { x: zoneRight + gap, y: clampY(tileCenterY - boxH / 2.0) },
-    { x: zoneLeft - boxW - gap, y: clampY(tileCenterY - boxH / 2.0) },
-    { x: clampX(tileCenterX - boxW / 2.0), y: zoneTop - boxH - gap },
-    { x: clampX(tileCenterX - boxW / 2.0), y: zoneBottom + gap }
-  ];
-
-  let chosen = null;
-  for (const cand of candidates) {
-    if (
-      cand.x >= 6.0 &&
-      cand.x + boxW <= paneW - 6.0 &&
-      cand.y >= topSafe &&
-      cand.y + boxH <= paneH - bottomSafe
-    ) {
-      chosen = cand;
-      break;
+  let castleFaction = null;
+  let castleHp = 0.0;
+  if (state.factions) {
+    for (const fk of Object.keys(state.factions)) {
+      const fd = state.factions[fk];
+      if (fd.alive && fd.castle_pos && fd.castle_pos[0] === sr && fd.castle_pos[1] === sc) {
+        castleFaction = parseInt(fk);
+        castleHp = fd.castle_hp;
+        break;
+      }
     }
   }
 
-  if (!chosen) {
-    const placeLeft = tileCenterX > paneW / 2.0;
-    const placeTop = tileCenterY > paneH / 2.0;
-    chosen = {
-      x: placeLeft ? 10.0 : Math.max(10.0, paneW - boxW - 10.0),
-      y: placeTop ? topSafe : Math.max(topSafe, paneH - boxH - bottomSafe)
-    };
+  let cardsHtml = "";
+
+  if (selectedUnit) {
+    const u = selectedUnit;
+    const uStats = (state.config && state.config.unit_stats && state.config.unit_stats[u.type])
+      ? state.config.unit_stats[u.type]
+      : { cost: 3.0, upkeep: 0.4, max_hp: 4.0, move_range: 2, atk_range: 1, dmg: 1.0 };
+    const disRatio = (state.config && state.config.disband_ratio) ? state.config.disband_ratio : 0.4;
+    const refundVal = uStats.cost * disRatio;
+    const refundPct = disRatio * 100.0;
+
+    const unitNamesUk = { worker: "Робітник", warrior: "Піхотинець", archer: "Стрілець" };
+    const unitNamesEn = { worker: "Worker", warrior: "Warrior", archer: "Archer" };
+    const uTitle = isUk ? unitNamesUk[u.type] : unitNamesEn[u.type];
+    const uIcon = DOCK_ICONS[u.type] || DOCK_ICONS.warrior;
+    const uCol = factionColors[u.faction] || "#0fbcf9";
+    const fCtrl = (state.factions && state.factions[String(u.faction)]) ? state.factions[String(u.faction)].controller : `F${u.faction}`;
+
+    let statusText = isUk ? "ЗАВЕРШИВ ХІД" : "FINISHED TURN";
+    let statusClass = "status-badge-done";
+    if (u.ready) {
+      if (!u.moved && !u.attacked) {
+        statusText = isUk ? "ГОТОВИЙ (РУХ + АТАКА)" : "READY (MOVE + ATTACK)";
+        statusClass = "status-badge-ready";
+      } else if (u.moved && !u.attacked) {
+        statusText = isUk ? "МОЖЕ АТАКУВАТИ" : "CAN ATTACK";
+        statusClass = "status-badge-atk";
+      } else {
+        statusText = isUk ? "ГОТОВИЙ" : "READY";
+        statusClass = "status-badge-ready";
+      }
+    }
+
+    const hpPct = Math.max(0.0, Math.min(100.0, (u.hp / u.max_hp) * 100.0));
+
+    cardsHtml += `
+      <div class="insp-section-card">
+        <div class="insp-header-row">
+          <div class="insp-entity-head">
+            <div class="insp-avatar" style="background: ${uCol};">${uIcon}</div>
+            <div class="insp-title-block">
+              <span class="insp-entity-name">${uTitle}</span>
+              <span class="insp-entity-sub">F${u.faction}: ${fCtrl}</span>
+            </div>
+          </div>
+          <span class="insp-coord-pill">(${sr}, ${sc})</span>
+        </div>
+
+        <div class="insp-status-badge ${statusClass}">${statusText}</div>
+
+        <div class="insp-hp-wrap">
+          <div class="insp-hp-fill" style="width: ${hpPct.toFixed(2)}%;"></div>
+          <div class="insp-hp-text">HP: ${u.hp.toFixed(2)} / ${u.max_hp.toFixed(2)} (${hpPct.toFixed(2)}%)</div>
+        </div>
+
+        <div class="insp-stats-grid">
+          <div class="insp-stat-box">
+            <span class="insp-stat-label">${isUk ? "Шкода атаки" : "Attack Damage"}</span>
+            <span class="insp-stat-value">${uStats.dmg.toFixed(2)} HP</span>
+          </div>
+          <div class="insp-stat-box">
+            <span class="insp-stat-label">${isUk ? "Рух / Дальність" : "Move / Range"}</span>
+            <span class="insp-stat-value">${uStats.move_range} / ${uStats.atk_range}</span>
+          </div>
+          <div class="insp-stat-box">
+            <span class="insp-stat-label">${isUk ? "Утримання" : "Upkeep"}</span>
+            <span class="insp-stat-value val-neg">-${uStats.upkeep.toFixed(2)}$${isUk ? "/р" : "/r"}</span>
+          </div>
+          <div class="insp-stat-box">
+            <span class="insp-stat-label">${isUk ? "Ефективність" : "Efficiency"}</span>
+            <span class="insp-stat-value val-gold">${u.efficiency.toFixed(2)}</span>
+          </div>
+          <div class="insp-stat-box full-row">
+            <span class="insp-stat-label">${isUk ? "Повернення при розпуску" : "Disband Refund"}</span>
+            <span class="insp-stat-value val-pos">+${refundVal.toFixed(2)}$ (${refundPct.toFixed(2)}% / ${uStats.cost.toFixed(2)}$)</span>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
-  flEl.style.left = `${Math.round(chosen.x)}px`;
-  flEl.style.top = `${Math.round(chosen.y)}px`;
+  if (castleFaction !== null) {
+    const cCol = factionColors[castleFaction] || "#feca57";
+    const fCtrl = (state.factions && state.factions[String(castleFaction)]) ? state.factions[String(castleFaction)].controller : `F${castleFaction}`;
+    const hpPct = Math.max(0.0, Math.min(100.0, (castleHp / 25.0) * 100.0));
+    const cTitle = isUk ? "Цитадель Фракції (Штаб)" : "Faction Castle (HQ)";
+    const occupiedNote = selectedUnit
+      ? (isUk ? "Зайнято юнітом (найм заблоковано)" : "Occupied by unit (recruitment blocked)")
+      : (isUk ? "Вільний для найму підрозділів" : "Ready to recruit units");
+
+    cardsHtml += `
+      <div class="insp-section-card">
+        <div class="insp-header-row">
+          <div class="insp-entity-head">
+            <div class="insp-avatar" style="background: ${cCol};">${DOCK_ICONS.castle}</div>
+            <div class="insp-title-block">
+              <span class="insp-entity-name">${cTitle}</span>
+              <span class="insp-entity-sub">F${castleFaction}: ${fCtrl}</span>
+            </div>
+          </div>
+          <span class="insp-coord-pill">(${sr}, ${sc})</span>
+        </div>
+
+        <div class="insp-hp-wrap">
+          <div class="insp-hp-fill" style="width: ${hpPct.toFixed(2)}%;"></div>
+          <div class="insp-hp-text">HQ: ${castleHp.toFixed(2)} / 25.00 HP (${hpPct.toFixed(2)}%)</div>
+        </div>
+
+        <div class="insp-stats-grid">
+          <div class="insp-stat-box full-row">
+            <span class="insp-stat-label">${isUk ? "Статус гарнізону" : "Garrison Status"}</span>
+            <span class="insp-stat-value">${occupiedNote}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  } else if (selectedStruct) {
+    const st = selectedStruct;
+    const sConfig = (state.config && state.config.struct_stats && state.config.struct_stats[String(st.type)])
+      ? state.config.struct_stats[String(st.type)]
+      : (st.type === 1 ? { cost: 4.0, max_hp: 8.0, atk_range: 2, dmg: 2.0 } : { cost: 5.0, max_hp: 10.0, atk_range: 0, dmg: 0.0 });
+    const demRatio = (state.config && state.config.demolish_ratio) ? state.config.demolish_ratio : 0.5;
+    const sRefund = sConfig.cost * demRatio;
+    const sRefundPct = demRatio * 100.0;
+
+    const sTitle = st.type === 1
+      ? (isUk ? "Оборонна Вежа" : "Defense Tower")
+      : (isUk ? "Передова Казарма" : "Forward Barracks");
+    const sIcon = st.type === 1 ? DOCK_ICONS.tower : DOCK_ICONS.barracks;
+    const sCol = factionColors[st.owner] || "#0fbcf9";
+    const fCtrl = (state.factions && state.factions[String(st.owner)]) ? state.factions[String(st.owner)].controller : `F${st.owner}`;
+    const hpPct = Math.max(0.0, Math.min(100.0, (st.hp / sConfig.max_hp) * 100.0));
+
+    cardsHtml += `
+      <div class="insp-section-card">
+        <div class="insp-header-row">
+          <div class="insp-entity-head">
+            <div class="insp-avatar" style="background: ${sCol};">${sIcon}</div>
+            <div class="insp-title-block">
+              <span class="insp-entity-name">${sTitle}</span>
+              <span class="insp-entity-sub">F${st.owner}: ${fCtrl}</span>
+            </div>
+          </div>
+          <span class="insp-coord-pill">(${sr}, ${sc})</span>
+        </div>
+
+        <div class="insp-hp-wrap">
+          <div class="insp-hp-fill" style="width: ${hpPct.toFixed(2)}%;"></div>
+          <div class="insp-hp-text">HP: ${st.hp.toFixed(2)} / ${sConfig.max_hp.toFixed(2)} (${hpPct.toFixed(2)}%)</div>
+        </div>
+
+        <div class="insp-stats-grid">
+          <div class="insp-stat-box">
+            <span class="insp-stat-label">${isUk ? "Вартість" : "Build Cost"}</span>
+            <span class="insp-stat-value val-gold">${sConfig.cost.toFixed(2)}$</span>
+          </div>
+          <div class="insp-stat-box">
+            <span class="insp-stat-label">${st.type === 1 ? (isUk ? "Обстріл (Дальність)" : "Fire (Range)") : (isUk ? "Призначення" : "Function")}</span>
+            <span class="insp-stat-value">${st.type === 1 ? `${sConfig.dmg.toFixed(2)} HP (${sConfig.atk_range})` : (isUk ? "Найм військ" : "Unit Spawn")}</span>
+          </div>
+          <div class="insp-stat-box full-row">
+            <span class="insp-stat-label">${isUk ? "Повернення при знесенні" : "Demolish Refund"}</span>
+            <span class="insp-stat-value val-pos">+${sRefund.toFixed(2)}$ (${sRefundPct.toFixed(2)}% / ${sConfig.cost.toFixed(2)}$)</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  const isBuiltUp = (castleFaction !== null || selectedStruct !== null);
+  const landIcon = tType === 0 ? DOCK_ICONS.mountain : DOCK_ICONS.land;
+  const yieldText = tType === 0
+    ? "0.00$"
+    : (isBuiltUp ? `+0.00$ (${isUk ? "база" : "base"} +${baseVal.toFixed(2)}$)` : `+${effVal.toFixed(2)}$${isUk ? "/раунд" : "/round"}`);
+
+  cardsHtml += `
+    <div class="insp-section-card">
+      <div class="insp-header-row">
+        <div class="insp-entity-head">
+          <div class="insp-avatar" style="background: #222f3e; border-color: ${ownerColor};">${landIcon}</div>
+          <div class="insp-title-block">
+            <span class="insp-entity-name">${terrainName}</span>
+            <span class="insp-entity-sub" style="color: ${ownerColor};">${ownerLabel}</span>
+          </div>
+        </div>
+        ${(!selectedUnit && castleFaction === null && !selectedStruct) ? `<span class="insp-coord-pill">(${sr}, ${sc})</span>` : ""}
+      </div>
+
+      <div class="insp-stats-grid">
+        <div class="insp-stat-box">
+          <span class="insp-stat-label">${isUk ? "Дохід клітинки" : "Tile Yield"}</span>
+          <span class="insp-stat-value val-pos">${yieldText}</span>
+        </div>
+        <div class="insp-stat-box">
+          <span class="insp-stat-label">${isUk ? "Стан ділянки" : "Tile Status"}</span>
+          <span class="insp-stat-value">${tType === 0 ? (isUk ? "Перешкода" : "Obstacle") : (isBuiltUp ? (isUk ? "Забудовано" : "Built-up") : (isUk ? "Вільна" : "Open"))}</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  cont.innerHTML = cardsHtml;
 }
 
 function renderActionDock() {
@@ -793,7 +967,6 @@ function updateUI() {
     roomLobbyPanel.style.display = "none";
     gamePanel.style.display = "none";
     renderActionDock();
-    renderFloatingInspector();
 
     const listCont = document.getElementById("rooms-list-container");
     listCont.innerHTML = "";
@@ -820,7 +993,6 @@ function updateUI() {
     roomLobbyPanel.style.display = "flex";
     gamePanel.style.display = "none";
     renderActionDock();
-    renderFloatingInspector();
 
     const rm = state.room;
     document.getElementById("room-lobby-title").textContent = `${t.roomLobbyTitle} ${rm.name} (${rm.max_players}P)`;
@@ -904,13 +1076,13 @@ function updateUI() {
     evoEl.textContent = logLines.join("\n");
 
     renderFactionsGrid();
+    renderInspectorPanel();
 
     const turnActive = state.is_my_turn && !state.match_finished && state.my_alive !== false;
     document.getElementById("b-end").disabled = !turnActive;
     document.getElementById("b-surrender").disabled = state.match_finished || state.my_alive === false;
 
     renderActionDock();
-    renderFloatingInspector();
   }
 
   drawBoard();
