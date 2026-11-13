@@ -32,8 +32,9 @@
   "Danulo": {
     "username": "Danulo",
     "base_rating": 10.0,
-    "matches_played": 2,
+    "matches_played": 3,
     "recent_wins": [
+      0.0,
       0.0,
       0.0
     ],
