@@ -1,0 +1,51 @@
+{
+  "Daniil_Commander": {
+    "username": "Daniil_Commander",
+    "base_rating": 90.25,
+    "matches_played": 1,
+    "recent_wins": [
+      1.0
+    ],
+    "prev_winrate": 1.0,
+    "created_generations": []
+  },
+  "Test1": {
+    "username": "Test1",
+    "base_rating": 35.0,
+    "matches_played": 0,
+    "recent_wins": [],
+    "prev_winrate": 0.5,
+    "created_generations": []
+  },
+  "__ip_map__": {
+    "127.0.0.1": "Guest1"
+  },
+  "__guest_counter__": 1,
+  "Guest1": {
+    "username": "Guest1",
+    "base_rating": 35.0,
+    "matches_played": 0,
+    "recent_wins": [],
+    "prev_winrate": 0.5,
+    "created_generations": []
+  },
+  "Danulo": {
+    "username": "Danulo",
+    "base_rating": 35.0,
+    "matches_played": 0,
+    "recent_wins": [],
+    "prev_winrate": 0.5,
+    "created_generations": []
+  },
+  "kov": {
+    "username": "kov",
+    "is_registered": false,
+    "password_hash": "",
+    "lang": "en",
+    "base_rating": 35.0,
+    "matches_played": 0,
+    "recent_wins": [],
+    "prev_winrate": 0.5,
+    "created_generations": []
+  }
+}
