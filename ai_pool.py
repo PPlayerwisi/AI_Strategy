@@ -110,6 +110,11 @@ class PoolRegistry:
         return dict(best_entry)
 
     @staticmethod
+    def select_opponent_for_rating(player_rating: float) -> dict:
+        target = float(player_rating) + 3.50
+        return PoolRegistry.select_closest_generation(target)
+
+    @staticmethod
     def enforce_pool_storage_limit(max_human_models: int = 25):
         PoolRegistry.ensure_initialized()
         with REGISTRY_LOCK:
@@ -310,10 +315,11 @@ class OnlineEvolutionEngine:
 
     @staticmethod
     def evolve_and_benchmark_from_match(
-        match_obs: list,
-        match_acts: list,
-        match_weights: list,
-        username: str = "Player",
+        username: str,
+        player_rating: float,
+        match_obs: np.ndarray,
+        match_actions: np.ndarray,
+        match_efficiencies: np.ndarray,
         match_roles: list = None
     ) -> dict:
         from microrts_env import MicroRTSEnv
@@ -352,8 +358,8 @@ class OnlineEvolutionEngine:
             model = PPO("MlpPolicy", dummy_env, verbose=0, learning_rate=0.0005, n_steps=512, batch_size=128, ent_coef=0.02, device="cpu")
 
         obs_list = list(match_obs)
-        acts_list = list(match_acts)
-        weights_list = list(match_weights)
+        acts_list = list(match_actions)
+        weights_list = list(match_efficiencies)
         if match_roles is not None and len(match_roles) == len(obs_list):
             roles_list = [int(r) for r in match_roles]
         else:
@@ -514,16 +520,10 @@ class OnlineEvolutionEngine:
         )
         entry["w_gauntlet"] = round(w_gauntlet * 100.00, 2)
 
-        entry = PoolRegistry.register_new_generation(
-            label=label,
-            filename=filename,
-            rating=r_assigned,
-            origin=f"player:{username}",
-            doctrine_alignment=mean_doctrine_alignment
-        )
-        entry["w_gauntlet"] = round(w_gauntlet * 100.00, 2)
-
-        from cloud_backup import CloudBackupManager
-        CloudBackupManager.backup_new_generation_async(entry, os.path.join(POOL_DIR, filename))
+        try:
+            from cloud_backup import CloudBackupManager
+            CloudBackupManager.backup_new_generation_async(entry, os.path.join(POOL_DIR, filename))
+        except Exception:
+            pass
 
         return entry
