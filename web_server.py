@@ -15,26 +15,37 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 
-from game_config import (
-    GRID_SIZE, MAX_STEPS, INITIAL_GOLD, CASTLE_MAX_HP,
-    TILE_VALUES, UNIT_STATS, STRUCT_STATS,
-    SUPPLY_LIMIT, SUPPLY_TAX_PER_UNIT,
-    DISBAND_REFUND_RATIO, DEMOLISH_REFUND_RATIO,
-    MIN_TRAINING_EFFICIENCY, MAX_WORKERS_PER_FACTION,
-    POOL_DIR, USERS_DB_FILE
-)
-from ai_pool import PoolRegistry, OnlineEvolutionEngine
-from ai_strategist import (
-    StrategicMapAnalyzer, HeuristicFallbackBot,
-    encode_state_from_live, compute_unit_efficiency
-)
+import game_config as cfg
+import ai_pool
+import ai_strategist
 
-PLAYER_INITIAL_RATING = 10.00
+GRID_SIZE = getattr(cfg, "GRID_SIZE", 18)
+MAX_STEPS = getattr(cfg, "MAX_STEPS", getattr(cfg, "MAX_TURNS", 300))
+INITIAL_GOLD = getattr(cfg, "INITIAL_GOLD", getattr(cfg, "STARTING_GOLD", 12.00))
+CASTLE_MAX_HP = getattr(cfg, "CASTLE_MAX_HP", 25.00)
+TILE_VALUES = getattr(cfg, "TILE_VALUES", getattr(cfg, "BASE_TILE_YIELDS", {0: 0.00, 1: 0.05, 2: 0.15, 3: 0.35}))
+UNIT_STATS = getattr(cfg, "UNIT_STATS", {})
+STRUCT_STATS = getattr(cfg, "STRUCT_STATS", {})
+SUPPLY_LIMIT = getattr(cfg, "SUPPLY_LIMIT", getattr(cfg, "SUPPLY_FREE_LIMIT", 8))
+SUPPLY_TAX_PER_UNIT = getattr(cfg, "SUPPLY_TAX_PER_UNIT", 0.15)
+DISBAND_REFUND_RATIO = getattr(cfg, "DISBAND_REFUND_RATIO", 0.40)
+DEMOLISH_REFUND_RATIO = getattr(cfg, "DEMOLISH_REFUND_RATIO", 0.50)
+MIN_TRAINING_EFFICIENCY = getattr(cfg, "MIN_TRAINING_EFFICIENCY", 100.00)
+MAX_WORKERS_PER_FACTION = getattr(cfg, "MAX_WORKERS_PER_FACTION", 4)
+POOL_DIR = getattr(cfg, "POOL_DIR", "./selfplay_pool/")
+USERS_DB_FILE = getattr(cfg, "USERS_DB_FILE", os.path.join(POOL_DIR, "users_db.json"))
+PLAYER_INITIAL_RATING = getattr(cfg, "PLAYER_INITIAL_RATING", 10.00)
+
 TERRAIN_MOUNTAIN = 0
 TERRAIN_PLAIN = 1
 TERRAIN_FERTILE = 2
 TERRAIN_GOLD = 3
 BASE_TILE_YIELDS = TILE_VALUES
+
+PoolRegistry = getattr(ai_pool, "PoolRegistry", None)
+OnlineEvolutionEngine = getattr(ai_pool, "OnlineEvolutionEngine", None)
+encode_state_from_live = getattr(ai_strategist, "encode_state_from_live", lambda *a, **kw: np.zeros(128, dtype=np.float32))
+compute_unit_efficiency = getattr(ai_strategist, "compute_unit_efficiency", lambda *a, **kw: 0.0)
 
 app = FastAPI()
 os.makedirs("static", exist_ok=True)
