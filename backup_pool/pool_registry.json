@@ -833,6 +833,24 @@
       "origin": "player:kov",
       "doctrine_alignment": 100.0,
       "created_at": 1794571723
+    },
+    {
+      "gen_id": "gen_evo_104_1794572195",
+      "label": "Gen-104-H (kov)",
+      "filename": "generation_human_104_68.zip",
+      "rating": 67.66,
+      "origin": "player:kov",
+      "doctrine_alignment": 93.42,
+      "created_at": 1794572195
+    },
+    {
+      "gen_id": "gen_evo_105_1794572195",
+      "label": "Gen-104-H (kov)",
+      "filename": "generation_human_104_68.zip",
+      "rating": 67.66,
+      "origin": "player:kov",
+      "doctrine_alignment": 93.42,
+      "created_at": 1794572195
     }
   ]
 }
