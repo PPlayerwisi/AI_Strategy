@@ -887,6 +887,60 @@
       "origin": "player:Danulo",
       "doctrine_alignment": 93.42,
       "created_at": 1794576989
+    },
+    {
+      "gen_id": "gen_evo_110_1794580845",
+      "label": "Gen-110-H (Danulo)",
+      "filename": "generation_human_110_69.zip",
+      "rating": 69.31,
+      "origin": "player:Danulo",
+      "doctrine_alignment": 93.42,
+      "created_at": 1794580845
+    },
+    {
+      "gen_id": "gen_evo_111_1794580845",
+      "label": "Gen-110-H (Danulo)",
+      "filename": "generation_human_110_69.zip",
+      "rating": 69.31,
+      "origin": "player:Danulo",
+      "doctrine_alignment": 93.42,
+      "created_at": 1794580845
+    },
+    {
+      "gen_id": "gen_evo_112_1794580899",
+      "label": "Gen-110-H (Danulo)",
+      "filename": "generation_human_110_69.zip",
+      "rating": 68.89,
+      "origin": "player:Danulo",
+      "doctrine_alignment": 93.42,
+      "created_at": 1794580899
+    },
+    {
+      "gen_id": "gen_evo_113_1794580899",
+      "label": "Gen-110-H (Danulo)",
+      "filename": "generation_human_110_69.zip",
+      "rating": 68.89,
+      "origin": "player:Danulo",
+      "doctrine_alignment": 93.42,
+      "created_at": 1794580899
+    },
+    {
+      "gen_id": "gen_evo_114_1794580908",
+      "label": "Gen-112-H (Brutal1)",
+      "filename": "generation_human_112_60.zip",
+      "rating": 59.84,
+      "origin": "player:Brutal1",
+      "doctrine_alignment": 93.42,
+      "created_at": 1794580908
+    },
+    {
+      "gen_id": "gen_evo_115_1794580908",
+      "label": "Gen-112-H (Brutal1)",
+      "filename": "generation_human_112_60.zip",
+      "rating": 59.84,
+      "origin": "player:Brutal1",
+      "doctrine_alignment": 93.42,
+      "created_at": 1794580908
     }
   ]
 }
