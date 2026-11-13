@@ -56,5 +56,16 @@
     ],
     "prev_winrate": 0.5,
     "created_generations": []
+  },
+  "Brutal1": {
+    "username": "Brutal1",
+    "is_registered": true,
+    "password_hash": "42c3f823778afce23cd8118388efc22a5b73222c98883ee106c499235a2c95d2",
+    "lang": "en",
+    "base_rating": 35.0,
+    "matches_played": 0,
+    "recent_wins": [],
+    "prev_winrate": 0.5,
+    "created_generations": []
   }
 }
