@@ -941,6 +941,24 @@
       "origin": "player:Brutal1",
       "doctrine_alignment": 93.42,
       "created_at": 1794580908
+    },
+    {
+      "gen_id": "gen_evo_116_1794581551",
+      "label": "Gen-116-H (kov)",
+      "filename": "generation_human_116_67.zip",
+      "rating": 67.17,
+      "origin": "player:kov",
+      "doctrine_alignment": 93.42,
+      "created_at": 1794581551
+    },
+    {
+      "gen_id": "gen_evo_117_1794581551",
+      "label": "Gen-116-H (kov)",
+      "filename": "generation_human_116_67.zip",
+      "rating": 67.17,
+      "origin": "player:kov",
+      "doctrine_alignment": 93.42,
+      "created_at": 1794581551
     }
   ]
 }
