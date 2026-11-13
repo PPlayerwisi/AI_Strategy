@@ -78,6 +78,7 @@ function resizeCanvas() {
   }
   clampCamera();
   drawBoard();
+  positionFloatingInspector();
 }
 
 window.addEventListener("resize", resizeCanvas);
@@ -139,6 +140,7 @@ canvas.addEventListener("mousemove", e => {
     panStartY = pos.y;
     clampCamera();
     drawBoard();
+    positionFloatingInspector();
   }
 });
 
@@ -154,6 +156,7 @@ canvas.addEventListener("wheel", e => {
   camY = pos.y - (pos.y - camY) * ratio;
   clampCamera();
   drawBoard();
+  positionFloatingInspector();
 }, { passive: false });
 
 canvas.addEventListener("touchstart", e => {
@@ -189,6 +192,7 @@ canvas.addEventListener("touchmove", e => {
       touchStartY = pos.y;
       clampCamera();
       drawBoard();
+      positionFloatingInspector();
     }
   } else if (touchMode === "pinch" && e.touches.length === 2) {
     const p1 = getTouchCanvasCoords(e.touches[0]);
@@ -206,6 +210,7 @@ canvas.addEventListener("touchmove", e => {
       camY = midY - (midY - camY) * ratio;
       clampCamera();
       drawBoard();
+      positionFloatingInspector();
     }
     pinchLastDist = dist;
   }
@@ -275,7 +280,6 @@ function applyStaticLabels(t) {
   document.getElementById("btn-leave-room").textContent = t.btnLeaveRoom;
 
   document.getElementById("lbl-box-telemetry").textContent = t.boxTelemetry;
-  document.getElementById("lbl-box-inspector").textContent = t.boxInspector;
   document.getElementById("b-stats").textContent = t.btnStats;
   document.getElementById("b-end").textContent = t.btnEnd;
   document.getElementById("b-surrender").textContent = t.btnSurrender || "Surrender";
@@ -288,6 +292,181 @@ function applyStaticLabels(t) {
   if (t.guideHtml) {
     document.getElementById("guide-content").innerHTML = t.guideHtml;
   }
+}
+
+function renderFactionsGrid() {
+  if (!state || !state.ui_text) return;
+  const t = state.ui_text;
+  const factions = state.factions || {};
+  const barColors = {
+    1: "linear-gradient(90deg, #eb3b5a, #ff6b81)",
+    2: "linear-gradient(90deg, #0fbcf9, #4bcffa)",
+    3: "linear-gradient(90deg, #2ecc71, #1dd1a1)",
+    4: "linear-gradient(90deg, #f39c12, #feca57)"
+  };
+
+  for (let f = 1; f <= 4; f++) {
+    const card = document.getElementById(`f-card-${f}`);
+    if (!card) continue;
+
+    const fd = factions[String(f)];
+    if (!fd) {
+      card.className = `faction-square f-theme-${f} empty-slot`;
+      card.innerHTML = "";
+      continue;
+    }
+
+    const isMe = (f === state.my_faction);
+    const isTurn = (f === state.current_turn_faction && !state.match_finished && fd.alive);
+    let classes = `faction-square f-theme-${f}`;
+    if (isTurn) classes += " active-turn";
+    if (!fd.alive) classes += " dead-faction";
+    card.className = classes;
+
+    let badgesHtml = "";
+    if (isMe) {
+      badgesHtml += `<span class="f-badge-you">${t.youTag || "YOU"}</span>`;
+    }
+    if (!fd.alive) {
+      badgesHtml += `<span class="f-badge-dead">${t.deadTag || "DEAD"}</span>`;
+    } else if (isTurn) {
+      badgesHtml += `<span class="f-badge-turn">★ ${t.turnLabel || "TURN"}</span>`;
+    }
+
+    const hpPct = Math.max(0.0, Math.min(100.0, (fd.castle_hp / 25.0) * 100.0));
+    const netClass = fd.net >= 0 ? "val-pos" : "val-neg";
+    const netSign = fd.net >= 0 ? "+" : "";
+
+    card.innerHTML = `
+      <div class="f-sq-header">
+        <div class="f-sq-title" title="F${f}: ${fd.controller}">F${f}: ${fd.controller}</div>
+        <div class="f-sq-badges">${badgesHtml}</div>
+      </div>
+      <div class="f-hq-bar-wrap">
+        <div class="f-hq-bar-fill" style="width: ${hpPct.toFixed(2)}%; background: ${barColors[f]};"></div>
+        <div class="f-hq-bar-text">HQ: ${fd.castle_hp.toFixed(2)} / 25.00 HP</div>
+      </div>
+      <div class="f-metrics-grid">
+        <div class="f-metric-pill">
+          <span class="f-metric-lbl">${t.goldLabel || "Gold"}</span>
+          <span class="f-metric-val val-gold">${fd.gold.toFixed(2)}$</span>
+        </div>
+        <div class="f-metric-pill">
+          <span class="f-metric-lbl">${t.netLabel || "Net"}</span>
+          <span class="f-metric-val ${netClass}">${netSign}${fd.net.toFixed(2)}$${t.perTurn || "/r"}</span>
+        </div>
+        <div class="f-metric-pill">
+          <span class="f-metric-lbl">${t.landLabel || "Land"}</span>
+          <span class="f-metric-val">${fd.tiles} <span class="val-pos">(+${fd.inc.toFixed(2)}$)</span></span>
+        </div>
+        <div class="f-metric-pill">
+          <span class="f-metric-lbl">${t.armyLabel || "Army"}</span>
+          <span class="f-metric-val">${fd.army} <span class="val-neg">(-${fd.upk.toFixed(2)}$)</span></span>
+        </div>
+      </div>
+    `;
+  }
+}
+
+function renderFloatingInspector() {
+  const flEl = document.getElementById("floating-inspector");
+  if (!flEl) return;
+
+  if (!state || state.screen !== "game" || !state.selected_pos || !state.inspector || !state.inspector.lines) {
+    flEl.classList.add("hidden");
+    return;
+  }
+
+  const [sr, sc] = state.selected_pos;
+  const lines = state.inspector.lines;
+  const headerTitle = state.ui_text ? (state.ui_text.boxInspector.split("(")[0].trim()) : "INSPECTOR";
+
+  const bodyHtml = lines.map(line => `<div class="fi-line">${line}</div>`).join("");
+  flEl.innerHTML = `
+    <div class="fi-header">
+      <span class="fi-title">${headerTitle}</span>
+      <span class="fi-coord">(${sr}, ${sc})</span>
+    </div>
+    <div class="fi-body">${bodyHtml}</div>
+  `;
+  flEl.classList.remove("hidden");
+  positionFloatingInspector();
+}
+
+function positionFloatingInspector() {
+  const flEl = document.getElementById("floating-inspector");
+  const pane = document.getElementById("left-pane");
+  if (!flEl || !pane || flEl.classList.contains("hidden") || !state || !state.selected_pos) return;
+
+  const [sr, sc] = state.selected_pos;
+  let minR = sr, maxR = sr, minC = sc, maxC = sc;
+
+  const activeTiles = [
+    ...(state.valid_moves || []),
+    ...(state.valid_attacks || [])
+  ];
+  for (const [r, c] of activeTiles) {
+    if (r < minR) minR = r;
+    if (r > maxR) maxR = r;
+    if (c < minC) minC = c;
+    if (c > maxC) maxC = c;
+  }
+
+  const cLeft = canvas.offsetLeft;
+  const cTop = canvas.offsetTop;
+
+  const zoneLeft = cLeft + camX + minC * cellSize;
+  const zoneRight = cLeft + camX + (maxC + 1.0) * cellSize;
+  const zoneTop = cTop + camY + minR * cellSize;
+  const zoneBottom = cTop + camY + (maxR + 1.0) * cellSize;
+
+  const tileCenterX = cLeft + camX + (sc + 0.5) * cellSize;
+  const tileCenterY = cTop + camY + (sr + 0.5) * cellSize;
+
+  const boxW = flEl.offsetWidth || 235;
+  const boxH = flEl.offsetHeight || 125;
+  const paneW = pane.clientWidth;
+  const paneH = pane.clientHeight;
+
+  const isMobile = window.innerWidth <= 900;
+  const topSafe = isMobile ? 74.0 : 10.0;
+  const bottomSafe = isMobile ? 10.0 : 78.0;
+  const gap = 12.0;
+
+  const clampX = x => Math.max(8.0, Math.min(paneW - boxW - 8.0, x));
+  const clampY = y => Math.max(topSafe, Math.min(paneH - boxH - bottomSafe, y));
+
+  const candidates = [
+    { x: zoneRight + gap, y: clampY(tileCenterY - boxH / 2.0) },
+    { x: zoneLeft - boxW - gap, y: clampY(tileCenterY - boxH / 2.0) },
+    { x: clampX(tileCenterX - boxW / 2.0), y: zoneTop - boxH - gap },
+    { x: clampX(tileCenterX - boxW / 2.0), y: zoneBottom + gap }
+  ];
+
+  let chosen = null;
+  for (const cand of candidates) {
+    if (
+      cand.x >= 6.0 &&
+      cand.x + boxW <= paneW - 6.0 &&
+      cand.y >= topSafe &&
+      cand.y + boxH <= paneH - bottomSafe
+    ) {
+      chosen = cand;
+      break;
+    }
+  }
+
+  if (!chosen) {
+    const placeLeft = tileCenterX > paneW / 2.0;
+    const placeTop = tileCenterY > paneH / 2.0;
+    chosen = {
+      x: placeLeft ? 10.0 : Math.max(10.0, paneW - boxW - 10.0),
+      y: placeTop ? topSafe : Math.max(topSafe, paneH - boxH - bottomSafe)
+    };
+  }
+
+  flEl.style.left = `${Math.round(chosen.x)}px`;
+  flEl.style.top = `${Math.round(chosen.y)}px`;
 }
 
 function renderActionDock() {
@@ -325,8 +504,8 @@ function renderActionDock() {
 
   if (selectedUnit) {
     const isMyUnit = (selectedUnit.faction === state.my_faction);
-    const disRefund = insp.disband_refund_val > 0 ? `+${insp.disband_refund_val.toFixed(1)}$` : "";
-    const demRefund = insp.demolish_refund_val > 0 ? `+${insp.demolish_refund_val.toFixed(1)}$` : "";
+    const disRefund = insp.disband_refund_val > 0 ? `+${insp.disband_refund_val.toFixed(2)}$` : "";
+    const demRefund = insp.demolish_refund_val > 0 ? `+${insp.demolish_refund_val.toFixed(2)}$` : "";
 
     items.push({
       icon: DOCK_ICONS.heal,
@@ -614,6 +793,7 @@ function updateUI() {
     roomLobbyPanel.style.display = "none";
     gamePanel.style.display = "none";
     renderActionDock();
+    renderFloatingInspector();
 
     const listCont = document.getElementById("rooms-list-container");
     listCont.innerHTML = "";
@@ -640,6 +820,7 @@ function updateUI() {
     roomLobbyPanel.style.display = "flex";
     gamePanel.style.display = "none";
     renderActionDock();
+    renderFloatingInspector();
 
     const rm = state.room;
     document.getElementById("room-lobby-title").textContent = `${t.roomLobbyTitle} ${rm.name} (${rm.max_players}P)`;
@@ -704,33 +885,14 @@ function updateUI() {
       bannerEl.textContent = `${t.waitingTurnBanner}${state.current_turn_user} (F${state.current_turn_faction})`;
     }
 
-    const fKeys = state.factions ? Object.keys(state.factions).sort((a, b) => parseInt(a) - parseInt(b)) : [];
-    let facLines = [];
-    for (const fk of fKeys) {
-      const fd = state.factions[fk];
-      const isMe = (parseInt(fk) === state.my_faction);
-      const isTurn = (parseInt(fk) === state.current_turn_faction && !state.match_finished);
-      const turnMark = isTurn ? "▶ " : "  ";
-      const meTag = isMe ? ` [${t.youTag}]` : "";
-      if (!fd.alive) {
-        facLines.push(`${turnMark}F${fk} (${fd.controller})${meTag}: [${t.deadTag}]`);
-      } else {
-        facLines.push(
-          `${turnMark}F${fk} (${fd.controller})${meTag}: ${t.goldLabel} ${fd.gold.toFixed(2)}$ | ${t.landLabel} ${fd.tiles} (+${fd.inc.toFixed(2)}$) | ${t.armyLabel} ${fd.army} (-${fd.upk.toFixed(2)}$) | ${fd.net >= 0 ? '+' : ''}${fd.net.toFixed(2)}$${t.perTurn} | HQ: ${fd.castle_hp.toFixed(0)}`
-        );
-      }
-    }
-
     document.getElementById("telemetry-text").textContent =
-      `${t.playerLabel}: ${state.username} | ${t.turnLabel}: ${state.turn}/${state.max_turns} | ${t.winrateLabel}: ${state.winrate.toFixed(2)}%\n` +
-      `------------------------------------------------------------\n` +
-      facLines.join("\n");
+      `${t.turnLabel}: ${state.turn}/${state.max_turns} | ${t.winrateLabel}: ${state.winrate.toFixed(2)}%`;
 
     document.getElementById("gen-live-badge").textContent =
       `${t.activeGenPrefix}: ${state.active_gen_label} | ${t.ratingLabel}: ${state.active_rating.toFixed(2)}`;
 
     const evoEl = document.getElementById("evo-banner");
-    let logLines = state.event_log ? state.event_log.slice(-4) : [];
+    let logLines = state.event_log ? state.event_log.slice(-3) : [];
     if (state.last_evolution_report) {
       const rep = state.last_evolution_report;
       if (rep.status === "training") {
@@ -741,13 +903,14 @@ function updateUI() {
     }
     evoEl.textContent = logLines.join("\n");
 
-    document.getElementById("inspector-text").textContent = state.inspector.lines.join("\n");
+    renderFactionsGrid();
 
     const turnActive = state.is_my_turn && !state.match_finished && state.my_alive !== false;
     document.getElementById("b-end").disabled = !turnActive;
     document.getElementById("b-surrender").disabled = state.match_finished || state.my_alive === false;
 
     renderActionDock();
+    renderFloatingInspector();
   }
 
   drawBoard();

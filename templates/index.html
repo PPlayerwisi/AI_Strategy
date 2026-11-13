@@ -7,7 +7,7 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
     <title id="page-title">Faction Warfare RTS</title>
-    <link rel="stylesheet" href="/static/style.css?v=7" />
+    <link rel="stylesheet" href="/static/style.css?v=8" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body>
@@ -57,6 +57,7 @@
     <div id="app-container" class="mode-menu" style="display: none">
       <div id="left-pane">
         <canvas id="board" width="700" height="700"></canvas>
+        <div id="floating-inspector" class="floating-inspector hidden"></div>
         <div id="unit-action-dock" class="action-dock hidden"></div>
       </div>
 
@@ -177,19 +178,30 @@
         <div id="game-control-panel" style="display: none">
           <div id="turn-status-banner" class="turn-banner turn-my"></div>
 
-          <div class="box">
-            <div id="lbl-box-telemetry" class="box-title">
-              SESSION TELEMETRY
+          <div class="box match-overview-box">
+            <div class="overview-top-row">
+              <div
+                id="lbl-box-telemetry"
+                class="box-title"
+                style="margin-bottom: 0"
+              >
+                ROUND TELEMETRY
+              </div>
+              <div id="telemetry-text" class="match-meta-summary"></div>
             </div>
-            <div id="telemetry-text"></div>
             <div id="gen-live-badge" class="gen-badge"></div>
             <div id="evo-banner"></div>
           </div>
 
-          <div class="box inspector-box-flex">
-            <div id="lbl-box-inspector" class="box-title">OBJECT INSPECTOR</div>
-            <div id="inspector-text"></div>
+          <div id="factions-telemetry-grid" class="factions-grid-4">
+            <div id="f-card-1" class="faction-square f-theme-1"></div>
+            <div id="f-card-2" class="faction-square f-theme-2"></div>
+            <div id="f-card-3" class="faction-square f-theme-3"></div>
+            <div id="f-card-4" class="faction-square f-theme-4"></div>
           </div>
+
+          <div id="lbl-box-inspector" style="display: none"></div>
+          <div id="inspector-text" style="display: none"></div>
 
           <div class="game-footer-buttons">
             <button
@@ -262,6 +274,6 @@
       </div>
     </div>
 
-    <script src="/static/game.js?v=7"></script>
+    <script src="/static/game.js?v=8"></script>
   </body>
 </html>

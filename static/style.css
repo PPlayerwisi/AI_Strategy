@@ -145,7 +145,7 @@ body {
     height: 100%;
 }
 
-/* Режим центрованого меню (Лобі та Очікування) */
+/* Режим центрованого меню */
 #app-container.mode-menu {
     justify-content: center;
     align-items: center;
@@ -206,7 +206,7 @@ body {
     margin-top: 14px;
 }
 
-/* Режим гри (Поле + Бічна панель) */
+/* Режим гри: квадратне поле + широка панель з 4 квадратами телеметрії */
 #app-container.mode-game {
     flex-direction: row;
     justify-content: center;
@@ -216,7 +216,7 @@ body {
 }
 
 #app-container.mode-game #left-pane {
-    flex: 1;
+    flex: 1 1 auto;
     background: #0d1217;
     display: flex;
     justify-content: center;
@@ -226,7 +226,7 @@ body {
 }
 
 #app-container.mode-game #right-pane {
-    width: clamp(320px, 28vw, 460px);
+    flex: 0 0 clamp(370px, 34vw, 620px);
     background: var(--bg-panel);
     border-left: 2px solid #2f3640;
     display: flex;
@@ -242,6 +242,280 @@ body {
     -webkit-user-select: none;
     display: block;
     box-shadow: 0 0 28px rgba(0, 0, 0, 0.85);
+}
+
+/* ================= 4 СТАТИЧНИХ КВАДРАТИ ТЕЛЕМЕТРІЇ ФРАКЦІЙ ================= */
+.match-overview-box {
+    padding: 7px 10px !important;
+    margin-bottom: 8px !important;
+}
+
+.overview-top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.match-meta-summary {
+    font-size: clamp(10.5px, 1.15vmin, 12.5px);
+    color: #c8d6e5;
+    font-weight: 600;
+}
+
+.factions-grid-4 {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    gap: clamp(8px, 1.1vmin, 12px);
+    flex: 1;
+    min-height: 250px;
+    margin-bottom: 8px;
+}
+
+.faction-square {
+    background: linear-gradient(160deg, #1e2936 0%, #141c24 100%);
+    border: 1.5px solid #32465a;
+    border-radius: 10px;
+    padding: clamp(7px, 1vmin, 12px);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+}
+
+.faction-square.f-theme-1 {
+    border-top: 4px solid #eb3b5a;
+}
+
+.faction-square.f-theme-2 {
+    border-top: 4px solid #0fbcf9;
+}
+
+.faction-square.f-theme-3 {
+    border-top: 4px solid #2ecc71;
+}
+
+.faction-square.f-theme-4 {
+    border-top: 4px solid #feca57;
+}
+
+.faction-square.active-turn {
+    border-color: #feca57;
+    box-shadow: 0 0 14px rgba(254, 202, 87, 0.35), inset 0 0 10px rgba(254, 202, 87, 0.08);
+}
+
+.faction-square.dead-faction {
+    opacity: 0.55;
+    filter: grayscale(0.65);
+}
+
+.faction-square.empty-slot {
+    background: rgba(16, 22, 29, 0.45);
+    border: 1.5px dashed #2c3e50;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    color: #576574;
+}
+
+.empty-slot-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    font-size: clamp(11px, 1.2vmin, 13px);
+    font-weight: 600;
+}
+
+.empty-slot-icon {
+    font-size: clamp(18px, 2.2vmin, 24px);
+    opacity: 0.45;
+}
+
+.f-sq-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 4px;
+}
+
+.f-sq-title {
+    font-size: clamp(11px, 1.25vmin, 13.5px);
+    font-weight: 700;
+    color: #ffffff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.f-sq-badges {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.f-badge-you {
+    background: var(--accent-cyan);
+    color: #0d1217;
+    font-size: 9.5px;
+    font-weight: 800;
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+
+.f-badge-turn {
+    background: var(--accent-gold);
+    color: #0d1217;
+    font-size: 9.5px;
+    font-weight: 800;
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+
+.f-badge-dead {
+    background: var(--accent-red);
+    color: #ffffff;
+    font-size: 9.5px;
+    font-weight: 800;
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+
+.f-hq-bar-wrap {
+    background: #0d1217;
+    border: 1px solid #2f3e4e;
+    border-radius: 5px;
+    height: clamp(14px, 1.6vmin, 18px);
+    position: relative;
+    overflow: hidden;
+    margin: 4px 0;
+}
+
+.f-hq-bar-fill {
+    height: 100%;
+    transition: width 0.25s ease;
+}
+
+.f-hq-bar-text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(9.5px, 1.05vmin, 11px);
+    font-weight: 700;
+    color: #ffffff;
+    text-shadow: 0 1px 2px #000;
+}
+
+.f-metrics-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+}
+
+.f-metric-pill {
+    background: rgba(13, 18, 23, 0.72);
+    border: 1px solid rgba(60, 99, 130, 0.45);
+    border-radius: 5px;
+    padding: 3px 6px;
+    display: flex;
+    flex-direction: column;
+}
+
+.f-metric-lbl {
+    font-size: clamp(8.5px, 0.95vmin, 10px);
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.f-metric-val {
+    font-family: 'Consolas', monospace;
+    font-size: clamp(10.5px, 1.2vmin, 12.5px);
+    font-weight: 700;
+    color: #f1f2f6;
+}
+
+.val-pos {
+    color: #2ecc71 !important;
+}
+
+.val-neg {
+    color: #ff6b81 !important;
+}
+
+.val-gold {
+    color: #feca57 !important;
+}
+
+/* ================= ПЛАВАЮЧИЙ ІНСПЕКТОР ОБ'ЄКТА БІЛЯ КЛІТИНКИ ================= */
+.floating-inspector {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    width: clamp(210px, 23vmin, 265px);
+    background: rgba(16, 23, 31, 0.93);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border: 1.5px solid var(--accent-cyan);
+    border-radius: 10px;
+    padding: 9px 11px;
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.85);
+    pointer-events: none !important;
+    z-index: 35;
+    transition: opacity 0.14s ease, left 0.12s ease, top 0.12s ease;
+}
+
+.floating-inspector.hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.fi-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(60, 99, 130, 0.55);
+    padding-bottom: 4px;
+    margin-bottom: 5px;
+    gap: 6px;
+}
+
+.fi-title {
+    font-size: clamp(11.5px, 1.3vmin, 13.5px);
+    font-weight: 800;
+    color: var(--accent-gold);
+}
+
+.fi-coord {
+    font-family: 'Consolas', monospace;
+    font-size: 10.5px;
+    color: var(--accent-cyan);
+    background: rgba(10, 189, 227, 0.14);
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+
+.fi-body {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-family: 'Consolas', monospace;
+    font-size: clamp(10px, 1.15vmin, 11.8px);
+    color: #d2dae2;
+    line-height: 1.32;
+}
+
+.fi-line {
+    word-break: break-word;
 }
 
 /* ================= СПЛИВАЮЧА ПАНЕЛЬ КРУГЛИХ ДІЙ (ACTION DOCK) ================= */
@@ -332,20 +606,20 @@ body {
     text-shadow: 0 1px 2px #000;
 }
 
-/* ================= КАРТКИ ТА ЕЛЕМЕНТИ ПАНЕЛІ ================= */
+/* ================= ЗАГАЛЬНІ КАРТКИ ТА КНОПКИ ПАНЕЛІ ================= */
 .box {
     background: var(--bg-card);
     border: 1px solid var(--border-blue);
     border-radius: 8px;
-    padding: clamp(8px, 1.2vmin, 14px);
-    margin-bottom: clamp(6px, 1vmin, 10px);
+    padding: clamp(7px, 1vmin, 12px);
+    margin-bottom: clamp(6px, 0.9vmin, 10px);
 }
 
 .box-title {
-    font-size: clamp(11px, 1.3vmin, 13.5px);
+    font-size: clamp(11px, 1.25vmin, 13px);
     font-weight: 700;
     color: var(--accent-gold);
-    margin-bottom: 6px;
+    margin-bottom: 5px;
     text-transform: uppercase;
     letter-spacing: 0.6px;
 }
@@ -361,7 +635,7 @@ body {
 .profile-username {
     font-weight: 700;
     color: var(--accent-cyan);
-    font-size: clamp(12.5px, 1.5vmin, 15px);
+    font-size: clamp(12.5px, 1.45vmin, 15px);
 }
 
 .profile-actions {
@@ -370,12 +644,12 @@ body {
 }
 
 .profile-actions button {
-    padding: clamp(5px, 0.8vmin, 8px) clamp(10px, 1.4vmin, 14px);
+    padding: clamp(5px, 0.8vmin, 8px) clamp(10px, 1.3vmin, 14px);
     border: none;
     border-radius: 5px;
     font-weight: 700;
     cursor: pointer;
-    font-size: clamp(11px, 1.25vmin, 13px);
+    font-size: clamp(11px, 1.2vmin, 13px);
 }
 
 .btn-top-guide {
@@ -412,12 +686,12 @@ body {
 }
 
 .turn-banner {
-    padding: clamp(7px, 1.1vmin, 11px);
+    padding: clamp(6px, 1vmin, 10px);
     border-radius: 7px;
-    font-size: clamp(11.5px, 1.35vmin, 13.5px);
+    font-size: clamp(11.5px, 1.3vmin, 13.5px);
     font-weight: 700;
     text-align: center;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     letter-spacing: 0.4px;
 }
 
@@ -446,30 +720,24 @@ body {
     border: 2px solid #feca57;
 }
 
-#telemetry-text,
-#inspector-text,
 #evo-banner {
     font-family: 'Consolas', monospace;
-    font-size: clamp(11px, 1.25vmin, 13px);
+    font-size: clamp(10px, 1.1vmin, 11.5px);
     white-space: pre-wrap;
-    color: #c8d6e5;
-    line-height: 1.4;
-}
-
-#evo-banner {
     color: #ff9f43;
-    margin-top: 6px;
+    margin-top: 4px;
+    line-height: 1.3;
 }
 
 .gen-badge {
     background: #10ac84;
     color: #fff;
-    padding: 5px 8px;
+    padding: 4px 8px;
     border-radius: 5px;
-    font-size: clamp(11px, 1.25vmin, 12.5px);
+    font-size: clamp(10.5px, 1.2vmin, 12px);
     font-weight: 700;
     text-align: center;
-    margin-top: 6px;
+    margin-top: 5px;
 }
 
 #game-control-panel {
@@ -478,15 +746,11 @@ body {
     flex: 1;
 }
 
-.inspector-box-flex {
-    flex: 1;
-}
-
 .game-footer-buttons {
     margin-top: auto;
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 4px;
 }
 
 .footer-sub-row {
@@ -496,14 +760,14 @@ body {
 
 .btn-act {
     width: 100%;
-    padding: clamp(8px, 1.2vmin, 11px);
-    margin: 2px 0;
+    padding: clamp(7px, 1.05vmin, 10px);
+    margin: 1px 0;
     background: #2e86de;
     color: #fff;
     border: none;
     border-radius: 6px;
     font-weight: 700;
-    font-size: clamp(11.5px, 1.35vmin, 13.5px);
+    font-size: clamp(11.5px, 1.3vmin, 13px);
     cursor: pointer;
     transition: opacity 0.15s, transform 0.1s;
 }
@@ -544,7 +808,7 @@ body {
 .btn-end {
     background: var(--accent-green) !important;
     color: #10161d !important;
-    font-size: clamp(12px, 1.45vmin, 14.5px);
+    font-size: clamp(12px, 1.4vmin, 14px);
 }
 
 .btn-stats {
@@ -715,21 +979,26 @@ body {
 
     #app-container.mode-game #left-pane {
         width: 100%;
-        height: 54vh;
-        height: 54dvh;
+        height: 52vh;
+        height: 52dvh;
         flex: none;
     }
 
     #app-container.mode-game #right-pane {
         width: 100%;
-        height: 46vh;
-        height: 46dvh;
+        height: 48vh;
+        height: 48dvh;
+        flex: none;
         border-left: none;
         border-top: 2px solid var(--border-blue);
-        padding: 8px 10px;
+        padding: 6px 8px;
     }
 
-    /* На телефонах кругла панель наказів закріплюється ЗВЕРХУ ігрового поля */
+    .factions-grid-4 {
+        min-height: 180px;
+        gap: 6px;
+    }
+
     .action-dock {
         top: 6px;
         bottom: auto;
@@ -748,5 +1017,10 @@ body {
     .dock-label {
         font-size: 9.5px;
         padding: 1px 4px;
+    }
+
+    .floating-inspector {
+        width: 195px;
+        padding: 6px 8px;
     }
 }
