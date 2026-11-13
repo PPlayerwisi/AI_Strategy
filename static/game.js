@@ -2,16 +2,31 @@ let currentUser = "";
 let currentLang = "en";
 let state = null;
 let cellSize = 34.0;
-let camX = 24.0, camY = 24.0;
+let minCellSize = 24.0;
+let camX = 34.0, camY = 34.0;
 let isPanning = false, panMoved = false, panStartX = 0, panStartY = 0;
 let touchMode = null;
 let touchMoved = false;
 let touchStartX = 0, touchStartY = 0;
 let pinchLastDist = 0;
 let chartInstance = null;
+let boardInitializedForMatch = false;
 
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
+
+const DOCK_ICONS = {
+  heal: `<svg viewBox="0 0 24 24"><path d="M10 3h4v7h7v4h-7v7h-4v-7H3v-4h7V3z"/></svg>`,
+  harvest: `<svg viewBox="0 0 24 24"><path d="M12 2L4 9l8 13 8-13-8-7zm0 3.2L16.6 9 12 16.8 7.4 9 12 5.2z"/></svg>`,
+  tower: `<svg viewBox="0 0 24 24"><path d="M5 3h3v3h2V3h4v3h2V3h3v6l-2 2v10H7V11L5 9V3zm5 10v5h4v-5h-4z"/></svg>`,
+  barracks: `<svg viewBox="0 0 24 24"><path d="M12 3L2 11h3v9h5v-6h4v6h5v-9h3L12 3zm0 4.5l3 2.5H9l3-2.5z"/></svg>`,
+  demolish: `<svg viewBox="0 0 24 24"><path d="M13 2l-2 6-6-2 4 5-5 4 6 1-1 6 4-5 5 4-1-6 6-2-5-4 2-5-6 2-1-4z"/></svg>`,
+  disband: `<svg viewBox="0 0 24 24"><path d="M12 2C7.5 2 4 5.5 4 10c0 2.8 1.5 5.2 3.8 6.6L8 21h8l.2-4.4C18.5 15.2 20 12.8 20 10c0-4.5-3.5-8-8-8zm-3 8a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm6 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm-5 5h4v2h-4v-2z"/></svg>`,
+  worker: `<svg viewBox="0 0 24 24"><path d="M15.5 4l4.5 4.5-2.8 2.8-1.7-1.7-8.5 8.5-2.1-2.1 8.5-8.5-1.7-1.7L15.5 4z"/></svg>`,
+  warrior: `<svg viewBox="0 0 24 24"><path d="M19 3l2 2-10 10 2 2-1.5 1.5-2.5-2.5-4 4L3 18l4-4-2.5-2.5L6 10l2 2L18 2l1 1z"/></svg>`,
+  archer: `<svg viewBox="0 0 24 24"><path d="M4 4c7 1 14 8 15 15h-2c-1-6-7-12-13-13V4zm15 1L7 17l-2-2L17 3l2 2z"/></svg>`,
+  fire: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="#fff" stroke-width="2.2"/><circle cx="12" cy="12" r="2.5"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4" stroke="#fff" stroke-width="2.2"/></svg>`
+};
 
 function getCanvasCoords(e) {
   const rect = canvas.getBoundingClientRect();
@@ -32,11 +47,12 @@ function isTileInList(r, c, list) {
 }
 
 function clampCamera() {
-  const boardPx = 18 * cellSize;
+  const boardPx = 18.0 * cellSize;
   const margin = 1.0 * cellSize;
   const minX = canvas.width - boardPx - margin;
   const maxX = margin;
   camX = minX > maxX ? (canvas.width - boardPx) / 2.0 : Math.max(minX, Math.min(maxX, camX));
+
   const minY = canvas.height - boardPx - margin;
   const maxY = margin;
   camY = minY > maxY ? (canvas.height - boardPx) / 2.0 : Math.max(minY, Math.min(maxY, camY));
@@ -44,20 +60,21 @@ function clampCamera() {
 
 function resizeCanvas() {
   const pane = document.getElementById("left-pane");
-  if (!pane) return;
+  if (!pane || pane.style.display === "none") return;
   const rect = pane.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return;
 
-  if (window.innerWidth <= 900) {
-    canvas.width = Math.floor(rect.width);
-    canvas.height = Math.floor(rect.height);
-    if (cellSize > 28.0 && state && state.turn <= 1) {
-      cellSize = Math.max(18.0, Math.floor(Math.min(canvas.width, canvas.height) / 19.5));
-    }
-  } else {
-    const sz = Math.min(700, Math.floor(rect.width - 12), Math.floor(rect.height - 12));
-    canvas.width = Math.max(320, sz);
-    canvas.height = Math.max(320, sz);
+  const side = Math.max(260, Math.floor(Math.min(rect.width - 4, rect.height - 4)));
+  const prevMin = minCellSize;
+  canvas.width = side;
+  canvas.height = side;
+
+  minCellSize = side / 20.0;
+  if (!boardInitializedForMatch || cellSize < minCellSize || Math.abs(cellSize - prevMin) < 0.5) {
+    cellSize = minCellSize;
+    camX = cellSize;
+    camY = cellSize;
+    boardInitializedForMatch = true;
   }
   clampCamera();
   drawBoard();
@@ -73,7 +90,19 @@ canvas.addEventListener("mousedown", e => {
     const c = Math.floor((pos.x - camX) / cellSize);
     const r = Math.floor((pos.y - camY) / cellSize);
     if (r >= 0 && r < 18 && c >= 0 && c < 18) {
+      if (state && state.selected_pos && state.selected_pos[0] === r && state.selected_pos[1] === c) {
+        state.selected_pos = null;
+        state.valid_moves = [];
+        state.valid_attacks = [];
+        updateUI();
+        return;
+      }
       sendAct("select_tile", r, c);
+    } else if (state) {
+      state.selected_pos = null;
+      state.valid_moves = [];
+      state.valid_attacks = [];
+      updateUI();
     }
   } else if (e.button === 1 || e.button === 2) {
     isPanning = true;
@@ -118,7 +147,8 @@ canvas.addEventListener("wheel", e => {
   const pos = getCanvasCoords(e);
   const factor = e.deltaY < 0 ? 1.12 : 0.89;
   const oldSize = cellSize;
-  cellSize = Math.max(18.0, Math.min(92.0, cellSize * factor));
+  const maxSize = Math.max(96.0, minCellSize * 3.0);
+  cellSize = Math.max(minCellSize, Math.min(maxSize, cellSize * factor));
   const ratio = cellSize / oldSize;
   camX = pos.x - (pos.x - camX) * ratio;
   camY = pos.y - (pos.y - camY) * ratio;
@@ -169,7 +199,8 @@ canvas.addEventListener("touchmove", e => {
       const midY = (p1.y + p2.y) / 2.0;
       const factor = dist / pinchLastDist;
       const oldSize = cellSize;
-      cellSize = Math.max(18.0, Math.min(92.0, cellSize * factor));
+      const maxSize = Math.max(96.0, minCellSize * 3.0);
+      cellSize = Math.max(minCellSize, Math.min(maxSize, cellSize * factor));
       const ratio = cellSize / oldSize;
       camX = midX - (midX - camX) * ratio;
       camY = midY - (midY - camY) * ratio;
@@ -189,9 +220,19 @@ canvas.addEventListener("touchend", e => {
     if (r >= 0 && r < 18 && c >= 0 && c < 18) {
       if (state && (isTileInList(r, c, state.valid_moves) || isTileInList(r, c, state.valid_attacks))) {
         sendAct("order_tile", r, c);
+      } else if (state && state.selected_pos && state.selected_pos[0] === r && state.selected_pos[1] === c) {
+        state.selected_pos = null;
+        state.valid_moves = [];
+        state.valid_attacks = [];
+        updateUI();
       } else {
         sendAct("select_tile", r, c);
       }
+    } else if (state) {
+      state.selected_pos = null;
+      state.valid_moves = [];
+      state.valid_attacks = [];
+      updateUI();
     }
   }
   if (e.touches.length === 0) {
@@ -229,22 +270,12 @@ function applyStaticLabels(t) {
   document.getElementById("lbl-mode-4p").textContent = t.mode4P;
   document.getElementById("lbl-fill-ai").textContent = t.fillAiCheck;
   document.getElementById("lbl-btn-createroom").textContent = t.btnCreateRoom;
-  document.getElementById("lbl-btn-quickai").textContent = t.btnQuickAi;
+  document.getElementById("lbl-btn-quickai").textContent = t.btnQuickAi || "AI Simulation";
   document.getElementById("lbl-box-roomslist").textContent = t.roomsListTitle;
   document.getElementById("btn-leave-room").textContent = t.btnLeaveRoom;
 
   document.getElementById("lbl-box-telemetry").textContent = t.boxTelemetry;
   document.getElementById("lbl-box-inspector").textContent = t.boxInspector;
-  document.getElementById("lbl-box-orders").textContent = t.boxOrders;
-  document.getElementById("b-heal").textContent = t.btnHeal;
-  document.getElementById("b-harv").textContent = t.btnHarv;
-  document.getElementById("b-tow").textContent = t.btnTow;
-  document.getElementById("b-bar").textContent = t.btnBar;
-  document.getElementById("b-dem").textContent = t.btnDem;
-  document.getElementById("b-dis").textContent = t.btnDis;
-  document.getElementById("b-swk").textContent = t.btnSwk;
-  document.getElementById("b-swr").textContent = t.btnSwr;
-  document.getElementById("b-sar").textContent = t.btnSar;
   document.getElementById("b-stats").textContent = t.btnStats;
   document.getElementById("b-end").textContent = t.btnEnd;
   document.getElementById("b-surrender").textContent = t.btnSurrender || "Surrender";
@@ -257,6 +288,157 @@ function applyStaticLabels(t) {
   if (t.guideHtml) {
     document.getElementById("guide-content").innerHTML = t.guideHtml;
   }
+}
+
+function renderActionDock() {
+  const dockEl = document.getElementById("unit-action-dock");
+  if (!dockEl) return;
+
+  if (!state || state.screen !== "game" || !state.selected_pos || !state.inspector || !state.ui_text) {
+    dockEl.classList.add("hidden");
+    dockEl.innerHTML = "";
+    return;
+  }
+
+  const t = state.ui_text;
+  const insp = state.inspector;
+  const [sr, sc] = state.selected_pos;
+  const turnActive = Boolean(state.is_my_turn && !state.match_finished && state.my_alive !== false);
+
+  const selectedUnit = state.units ? state.units.find(u => u.r === sr && u.c === sc) : null;
+  const selectedStruct = state.structs ? state.structs.find(s => s.r === sr && s.c === sc) : null;
+
+  let isCastle = false;
+  let castleOwner = null;
+  if (state.factions) {
+    for (const fk of Object.keys(state.factions)) {
+      const fd = state.factions[fk];
+      if (fd.alive && fd.castle_pos && fd.castle_pos[0] === sr && fd.castle_pos[1] === sc) {
+        isCastle = true;
+        castleOwner = parseInt(fk);
+        break;
+      }
+    }
+  }
+
+  let items = [];
+
+  if (selectedUnit) {
+    const isMyUnit = (selectedUnit.faction === state.my_faction);
+    const disRefund = insp.disband_refund_val > 0 ? `+${insp.disband_refund_val.toFixed(1)}$` : "";
+    const demRefund = insp.demolish_refund_val > 0 ? `+${insp.demolish_refund_val.toFixed(1)}$` : "";
+
+    items.push({
+      icon: DOCK_ICONS.heal,
+      label: t.dockHeal || "Heal",
+      available: Boolean(turnActive && isMyUnit && insp.can_heal),
+      onClick: () => sendAct("heal")
+    });
+
+    if (selectedUnit.type === "worker") {
+      items.push({
+        icon: DOCK_ICONS.harvest,
+        label: t.dockHarv || "Harvest",
+        available: Boolean(turnActive && isMyUnit && insp.can_harvest),
+        onClick: () => sendAct("harvest")
+      });
+      items.push({
+        icon: DOCK_ICONS.tower,
+        label: t.dockTow || "Tower (4$)",
+        available: Boolean(turnActive && isMyUnit && insp.can_build_tower),
+        onClick: () => sendAct("build", null, null, "tower")
+      });
+      items.push({
+        icon: DOCK_ICONS.barracks,
+        label: t.dockBar || "Barracks (5$)",
+        available: Boolean(turnActive && isMyUnit && insp.can_build_barracks),
+        onClick: () => sendAct("build", null, null, "barracks")
+      });
+      items.push({
+        icon: DOCK_ICONS.demolish,
+        label: `${t.dockDem || "Demolish"} ${demRefund}`.trim(),
+        available: Boolean(turnActive && isMyUnit && insp.can_demolish),
+        onClick: () => sendAct("demolish")
+      });
+    }
+
+    items.push({
+      icon: DOCK_ICONS.disband,
+      label: `${t.dockDis || "Disband"} ${disRefund}`.trim(),
+      available: Boolean(turnActive && isMyUnit && insp.can_disband),
+      onClick: () => sendAct("disband")
+    });
+  } else if (isCastle || (selectedStruct && selectedStruct.type === 2)) {
+    const isMySpawner = isCastle ? (castleOwner === state.my_faction) : (selectedStruct.owner === state.my_faction);
+    items.push({
+      icon: DOCK_ICONS.worker,
+      label: t.dockSwk || "Worker (3$)",
+      available: Boolean(turnActive && isMySpawner && insp.can_spawn_worker),
+      onClick: () => sendAct("spawn", null, null, "worker")
+    });
+    items.push({
+      icon: DOCK_ICONS.warrior,
+      label: t.dockSwr || "Warrior (6$)",
+      available: Boolean(turnActive && isMySpawner && insp.can_spawn_warrior),
+      onClick: () => sendAct("spawn", null, null, "warrior")
+    });
+    items.push({
+      icon: DOCK_ICONS.archer,
+      label: t.dockSar || "Archer (8.5$)",
+      available: Boolean(turnActive && isMySpawner && insp.can_spawn_archer),
+      onClick: () => sendAct("spawn", null, null, "archer")
+    });
+  } else if (selectedStruct && selectedStruct.type === 1) {
+    const canFire = Boolean(
+      turnActive &&
+      selectedStruct.owner === state.my_faction &&
+      selectedStruct.ready &&
+      state.valid_attacks &&
+      state.valid_attacks.length > 0
+    );
+    items.push({
+      icon: DOCK_ICONS.fire,
+      label: t.dockTowerFire || "Fire (RMB)",
+      available: canFire,
+      onClick: () => {
+        if (canFire && state.valid_attacks.length > 0) {
+          const [tr, tc] = state.valid_attacks[0];
+          sendAct("order_tile", tr, tc);
+        }
+      }
+    });
+  }
+
+  if (items.length === 0) {
+    dockEl.classList.add("hidden");
+    dockEl.innerHTML = "";
+    return;
+  }
+
+  dockEl.innerHTML = "";
+  for (const item of items) {
+    const wrap = document.createElement("div");
+    wrap.className = "dock-item";
+    wrap.innerHTML = `
+      <div class="dock-circle ${item.available ? 'available' : 'unavailable'}">${item.icon}</div>
+      <div class="dock-label">${item.label}</div>
+    `;
+    wrap.addEventListener("click", e => {
+      e.stopPropagation();
+      if (item.available) {
+        item.onClick();
+      }
+    });
+    dockEl.appendChild(wrap);
+  }
+  dockEl.classList.remove("hidden");
+}
+
+function aiSimulationPlaceholder() {
+  const msg = currentLang === "uk"
+    ? "Режим автономної ШІ Симуляції буде додано в наступному оновленні!"
+    : "Autonomous AI Simulation mode is coming in a future update!";
+  alert(msg);
 }
 
 async function initApp() {
@@ -299,7 +481,6 @@ async function submitAuth(mode) {
     document.getElementById("auth-screen").style.display = "none";
     document.getElementById("app-container").style.display = "flex";
     state = data.state;
-    resizeCanvas();
     updateUI();
   } catch (err) {
     errEl.textContent = "Network error";
@@ -329,7 +510,13 @@ async function fetchState() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: currentUser, action_type: "get", param: currentLang })
     });
-    state = await res.json();
+    const newState = await res.json();
+    if (state && state.selected_pos === null && newState.screen === "game") {
+      newState.selected_pos = null;
+      newState.valid_moves = [];
+      newState.valid_attacks = [];
+    }
+    state = newState;
     if (state.lang) currentLang = state.lang;
     updateUI();
   } catch (err) {
@@ -349,8 +536,10 @@ async function roomAction(action, extra = {}) {
       alert(data.error || "Room action error");
       return;
     }
+    if (action === "start" || action === "rematch") {
+      boardInitializedForMatch = false;
+    }
     state = data.state;
-    resizeCanvas();
     updateUI();
   } catch (err) {
     console.error("Room action error:", err);
@@ -372,16 +561,12 @@ function createRoom() {
   });
 }
 
-function quickBotMatch() {
-  const modeVal = document.querySelector('input[name="room-mode"]:checked').value;
-  roomAction("quick_bot_match", { max_players: parseInt(modeVal), fill_ai: true });
-}
-
 async function joinRoom(rid, isPriv) {
   let pass = "";
   if (isPriv) {
     pass = prompt("Enter room password:") || "";
   }
+  boardInitializedForMatch = false;
   await roomAction("join", { room_id: rid, password: pass });
 }
 
@@ -418,19 +603,22 @@ function updateUI() {
   document.getElementById("current-user-display").textContent = `${state.username} (${t.baseLabel}: ${state.base_rating.toFixed(2)})`;
 
   const screen = state.screen || "lobby";
+  const appCont = document.getElementById("app-container");
   const lobbyPanel = document.getElementById("lobby-panel");
   const roomLobbyPanel = document.getElementById("room-lobby-panel");
   const gamePanel = document.getElementById("game-control-panel");
 
   if (screen === "lobby") {
-    lobbyPanel.style.display = "block";
+    appCont.className = "mode-menu";
+    lobbyPanel.style.display = "grid";
     roomLobbyPanel.style.display = "none";
     gamePanel.style.display = "none";
+    renderActionDock();
 
     const listCont = document.getElementById("rooms-list-container");
     listCont.innerHTML = "";
     if (!state.rooms || state.rooms.length === 0) {
-      listCont.innerHTML = `<div style="color: #8395a7; font-size: 12px; text-align:center; padding: 20px;">${t.emptyRooms}</div>`;
+      listCont.innerHTML = `<div style="color: #8395a7; font-size: 13px; text-align:center; padding: 30px 10px;">${t.emptyRooms}</div>`;
     } else {
       for (const rm of state.rooms) {
         const card = document.createElement("div");
@@ -441,15 +629,17 @@ function updateUI() {
             <h4>${rm.name} (${rm.max_players}P) ${rm.is_private ? '🔒' : ''}</h4>
             <p>${t.playersCount}: ${rm.filled_slots}/${rm.max_players} | ${t.hostLabel}: ${rm.host} | ${stText}</p>
           </div>
-          <button class="auth-btn" style="padding: 6px 14px; font-size: 11px; flex: none;" onclick="joinRoom('${rm.room_id}', ${rm.is_private})">${t.btnJoin}</button>
+          <button class="auth-btn" style="padding: 7px 16px; flex: none;" onclick="joinRoom('${rm.room_id}', ${rm.is_private})">${t.btnJoin}</button>
         `;
         listCont.appendChild(card);
       }
     }
   } else if (screen === "room_lobby") {
+    appCont.className = "mode-menu";
     lobbyPanel.style.display = "none";
-    roomLobbyPanel.style.display = "block";
+    roomLobbyPanel.style.display = "flex";
     gamePanel.style.display = "none";
+    renderActionDock();
 
     const rm = state.room;
     document.getElementById("room-lobby-title").textContent = `${t.roomLobbyTitle} ${rm.name} (${rm.max_players}P)`;
@@ -468,12 +658,12 @@ function updateUI() {
 
       let btnHtml = "";
       if (slot.kind === "empty") {
-        btnHtml = `<button class="auth-btn" style="font-size:10px; padding:4px 8px;" onclick="roomAction('switch_slot', {slot_faction: ${slot.faction}})">${t.btnTakeSlot}</button>`;
+        btnHtml = `<button class="auth-btn" style="font-size:11px; padding:5px 10px;" onclick="roomAction('switch_slot', {slot_faction: ${slot.faction}})">${t.btnTakeSlot}</button>`;
         if (state.is_host) {
-          btnHtml += ` <button class="auth-btn" style="font-size:10px; padding:4px 8px; background:#f39c12;" onclick="roomAction('add_ai', {slot_faction: ${slot.faction}})">${t.btnAddAi}</button>`;
+          btnHtml += ` <button class="auth-btn" style="font-size:11px; padding:5px 10px; background:#f39c12;" onclick="roomAction('add_ai', {slot_faction: ${slot.faction}})">${t.btnAddAi}</button>`;
         }
       } else if (state.is_host && slot.username !== state.username) {
-        btnHtml = `<button class="auth-btn" style="font-size:10px; padding:4px 8px; background:#eb3b5a;" onclick="roomAction('kick_slot', {slot_faction: ${slot.faction}})">${t.btnKick}</button>`;
+        btnHtml = `<button class="auth-btn" style="font-size:11px; padding:5px 10px; background:#eb3b5a; color:#fff;" onclick="roomAction('kick_slot', {slot_faction: ${slot.faction}})">${t.btnKick}</button>`;
       }
 
       row.innerHTML = `<span>Faction #${slot.faction}: <b>${statusDesc}</b></span> <span>${btnHtml}</span>`;
@@ -489,9 +679,15 @@ function updateUI() {
       startBtn.style.display = "none";
     }
   } else if (screen === "game") {
+    const switchedToGame = (appCont.className !== "mode-game");
+    appCont.className = "mode-game";
     lobbyPanel.style.display = "none";
     roomLobbyPanel.style.display = "none";
     gamePanel.style.display = "flex";
+
+    if (switchedToGame) {
+      resizeCanvas();
+    }
 
     const bannerEl = document.getElementById("turn-status-banner");
     if (state.match_finished) {
@@ -546,25 +742,12 @@ function updateUI() {
     evoEl.textContent = logLines.join("\n");
 
     document.getElementById("inspector-text").textContent = state.inspector.lines.join("\n");
-    if (state.inspector.disband_refund_val > 0) {
-      document.getElementById("b-dis").textContent = `${t.btnDis.split('(')[0].trim()} (+${state.inspector.disband_refund_val.toFixed(2)}$)`;
-    }
-    if (state.inspector.demolish_refund_val > 0) {
-      document.getElementById("b-dem").textContent = `${t.btnDem.split('(')[0].trim()} (+${state.inspector.demolish_refund_val.toFixed(2)}$)`;
-    }
 
     const turnActive = state.is_my_turn && !state.match_finished && state.my_alive !== false;
-    document.getElementById("b-heal").disabled = !turnActive || !state.inspector.can_heal;
-    document.getElementById("b-harv").disabled = !turnActive || !state.inspector.can_harvest;
-    document.getElementById("b-tow").disabled = !turnActive || !state.inspector.can_build_tower;
-    document.getElementById("b-bar").disabled = !turnActive || !state.inspector.can_build_barracks;
-    document.getElementById("b-dem").disabled = !turnActive || !state.inspector.can_demolish;
-    document.getElementById("b-dis").disabled = !turnActive || !state.inspector.can_disband;
-    document.getElementById("b-swk").disabled = !turnActive || !state.inspector.can_spawn_worker;
-    document.getElementById("b-swr").disabled = !turnActive || !state.inspector.can_spawn_warrior;
-    document.getElementById("b-sar").disabled = !turnActive || !state.inspector.can_spawn_archer;
     document.getElementById("b-end").disabled = !turnActive;
     document.getElementById("b-surrender").disabled = state.match_finished || state.my_alive === false;
+
+    renderActionDock();
   }
 
   drawBoard();
@@ -618,14 +801,17 @@ function drawUnitIcon(cx, cy, rad, uType, faction) {
 }
 
 function drawBoard() {
-  if (!state || !state.terrain || !state.ui_text) return;
+  if (!state || !state.terrain || !state.ui_text || state.screen !== "game") return;
   const t = state.ui_text;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const cs = cellSize, ox = camX, oy = camY, boardPx = 18 * cs;
 
+  ctx.fillStyle = "#0a0e13";
+  ctx.fillRect(ox - cs, oy - cs, boardPx + 2 * cs, boardPx + 2 * cs);
   ctx.strokeStyle = "#2c3e50";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(ox - cs, oy - cs, boardPx + 2 * cs, boardPx + 2 * cs);
+  ctx.lineWidth = 2.5;
+  ctx.strokeRect(ox - cs + 1, oy - cs + 1, boardPx + 2 * cs - 2, boardPx + 2 * cs - 2);
+
   ctx.strokeStyle = (state.is_my_turn && !state.match_finished) ? "#2ecc71" : "#feca57";
   ctx.lineWidth = (state.is_my_turn && !state.match_finished) ? 3.5 : 2;
   ctx.strokeRect(ox - 2, oy - 2, boardPx + 4, boardPx + 4);
@@ -653,7 +839,7 @@ function drawBoard() {
         ctx.fill();
       } else {
         const val = state.eff_yields[r][c];
-        if (val > 0 && cs >= 26) {
+        if (val > 0 && cs >= 22) {
           ctx.fillStyle = val >= 0.30 ? "#feca57" : (val >= 0.12 ? "#1dd1a1" : "#8395a7");
           ctx.font = `bold ${Math.max(8, Math.floor(cs * 0.20))}px Arial`;
           ctx.fillText(val.toFixed(2), x + 3, y + cs * 0.26);
@@ -838,7 +1024,6 @@ function closeGuideModal() {
   document.getElementById("guide-overlay").style.display = "none";
 }
 
-clampCamera();
 initApp();
 
 setInterval(() => {

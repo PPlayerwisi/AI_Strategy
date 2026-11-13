@@ -7,7 +7,7 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
     <title id="page-title">Faction Warfare RTS</title>
-    <link rel="stylesheet" href="/static/style.css?v=6" />
+    <link rel="stylesheet" href="/static/style.css?v=7" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body>
@@ -44,70 +44,56 @@
           </button>
         </div>
         <button
-          class="auth-btn"
-          style="
-            width: 100%;
-            margin-top: 10px;
-            background: #10ac84;
-            color: #fff;
-          "
+          class="auth-btn auth-guest-btn"
           onclick="submitAuth('guest')"
           id="lbl-btn-guest"
         >
           Continue as Guest
         </button>
-        <div
-          id="auth-error"
-          style="color: #eb3b5a; font-size: 12px; margin-top: 10px"
-        ></div>
+        <div id="auth-error" class="auth-error-msg"></div>
       </div>
     </div>
 
-    <div id="app-container" style="display: none">
+    <div id="app-container" class="mode-menu" style="display: none">
       <div id="left-pane">
         <canvas id="board" width="700" height="700"></canvas>
+        <div id="unit-action-dock" class="action-dock hidden"></div>
       </div>
 
       <div id="right-pane">
-        <div class="box">
-          <div id="lbl-box-profile" class="box-title">USER PROFILE</div>
+        <div class="box profile-header-box">
+          <div id="lbl-box-profile" class="box-title">COMMANDER PROFILE</div>
           <div class="profile-bar">
-            <span
-              id="current-user-display"
-              style="
-                font-weight: bold;
-                color: #0abde3;
-                flex: 1;
-                font-size: 12.5px;
-              "
-            ></span>
-            <button
-              id="btn-guide"
-              style="background: #f39c12; color: #182026"
-              onclick="openGuideModal()"
-            >
-              Guide
-            </button>
-            <button
-              id="btn-logout"
-              class="auth-btn-secondary"
-              onclick="logoutUser()"
-            >
-              Logout
-            </button>
-            <button
-              id="btn-lang"
-              style="background: #576574; color: #ffffff"
-              onclick="toggleLanguage()"
-            >
-              UK
-            </button>
+            <span id="current-user-display" class="profile-username"></span>
+            <div class="profile-actions">
+              <button
+                id="btn-guide"
+                class="btn-top-guide"
+                onclick="openGuideModal()"
+              >
+                Guide
+              </button>
+              <button
+                id="btn-logout"
+                class="auth-btn-secondary"
+                onclick="logoutUser()"
+              >
+                Logout
+              </button>
+              <button
+                id="btn-lang"
+                class="btn-top-lang"
+                onclick="toggleLanguage()"
+              >
+                UK
+              </button>
+            </div>
           </div>
         </div>
 
-        <div id="lobby-panel">
-          <div class="box">
-            <div id="lbl-box-createroom" class="box-title">Create Room</div>
+        <div id="lobby-panel" class="menu-grid-layout">
+          <div class="box lobby-create-box">
+            <div id="lbl-box-createroom" class="box-title">Create New Room</div>
             <input
               type="text"
               id="room-name-inp"
@@ -120,65 +106,66 @@
               class="auth-input"
               placeholder="Password (optional)..."
             />
-            <div
-              style="display: flex; gap: 10px; margin: 8px 0; font-size: 12px"
-            >
-              <label
+            <div class="mode-radio-group">
+              <label class="radio-pill"
                 ><input type="radio" name="room-mode" value="2" checked />
                 <span id="lbl-mode-2p">2 Players</span></label
               >
-              <label
+              <label class="radio-pill"
                 ><input type="radio" name="room-mode" value="4" />
                 <span id="lbl-mode-4p">4 Players</span></label
               >
             </div>
-            <label style="font-size: 12px; display: block; margin-bottom: 8px"
-              ><input type="checkbox" id="room-fill-ai" />
-              <span id="lbl-fill-ai">Fill with AI bots</span></label
+            <label class="check-row"
+              ><input type="checkbox" id="room-fill-ai" checked />
+              <span id="lbl-fill-ai">Fill empty slots with AI bots</span></label
             >
             <button
-              class="btn-act"
-              style="background: #0abde3; color: #182026"
+              class="btn-act btn-primary-cyan"
               onclick="createRoom()"
               id="lbl-btn-createroom"
             >
               Create Room
             </button>
             <button
-              class="btn-act"
-              style="background: #e67e22"
-              onclick="quickBotMatch()"
+              class="btn-act btn-ai-sim"
+              onclick="aiSimulationPlaceholder()"
               id="lbl-btn-quickai"
             >
-              Quick Match vs AI
+              AI Simulation
             </button>
           </div>
 
-          <div class="box" style="flex: 1">
-            <div id="lbl-box-roomslist" class="box-title">Available Rooms</div>
+          <div class="box lobby-rooms-box">
+            <div id="lbl-box-roomslist" class="box-title">
+              Available Battle Rooms
+            </div>
             <div id="rooms-list-container" class="rooms-container"></div>
           </div>
         </div>
 
-        <div id="room-lobby-panel" style="display: none">
-          <div class="box">
-            <div id="room-lobby-title" class="box-title" style="color: #0abde3">
+        <div
+          id="room-lobby-panel"
+          class="room-staging-wrapper"
+          style="display: none"
+        >
+          <div class="box staging-box">
+            <div id="room-lobby-title" class="box-title staging-title">
               Room Lobby
             </div>
-            <div id="room-slots-container" style="margin: 10px 0"></div>
-            <div style="display: flex; gap: 8px">
+            <div id="room-slots-container" class="slots-grid-container"></div>
+            <div class="staging-btn-row">
               <button
                 id="btn-start-game"
-                class="btn-act"
-                style="background: #2ecc71; color: #182026; display: none"
+                class="btn-act btn-start-match"
+                style="display: none"
                 onclick="roomAction('start')"
               >
-                Start Game
+                Start Battle
               </button>
               <button
                 id="btn-leave-room"
-                class="btn-act"
-                style="background: #eb3b5a"
+                class="btn-act btn-leave-match"
                 onclick="roomAction('leave')"
               >
                 Leave Room
@@ -187,10 +174,7 @@
           </div>
         </div>
 
-        <div
-          id="game-control-panel"
-          style="display: none; flex-direction: column; flex: 1"
-        >
+        <div id="game-control-panel" style="display: none">
           <div id="turn-status-banner" class="turn-banner turn-my"></div>
 
           <div class="box">
@@ -202,118 +186,42 @@
             <div id="evo-banner"></div>
           </div>
 
-          <div class="box">
+          <div class="box inspector-box-flex">
             <div id="lbl-box-inspector" class="box-title">OBJECT INSPECTOR</div>
             <div id="inspector-text"></div>
           </div>
 
-          <div class="box">
-            <div id="lbl-box-orders" class="box-title">
-              ORDERS & CONSTRUCTION
-            </div>
-            <div class="orders-grid">
-              <button
-                id="b-heal"
-                class="btn-act"
-                style="background: #10ac84"
-                onclick="sendAct('heal')"
-              >
-                Heal
-              </button>
-              <button
-                id="b-harv"
-                class="btn-act"
-                style="background: #d35400"
-                onclick="sendAct('harvest')"
-              >
-                Harvest
-              </button>
-              <button
-                id="b-tow"
-                class="btn-act"
-                style="background: #576574"
-                onclick="sendAct('build', null, null, 'tower')"
-              >
-                Tower
-              </button>
-              <button
-                id="b-bar"
-                class="btn-act"
-                style="background: #576574"
-                onclick="sendAct('build', null, null, 'barracks')"
-              >
-                Barracks
-              </button>
-              <button
-                id="b-dem"
-                class="btn-act"
-                style="background: #8e44ad"
-                onclick="sendAct('demolish')"
-              >
-                Demolish
-              </button>
-              <button
-                id="b-dis"
-                class="btn-act"
-                style="background: #c0392b"
-                onclick="sendAct('disband')"
-              >
-                Disband
-              </button>
-              <button
-                id="b-swk"
-                class="btn-act"
-                onclick="sendAct('spawn', null, null, 'worker')"
-              >
-                +Worker
-              </button>
-              <button
-                id="b-swr"
-                class="btn-act"
-                onclick="sendAct('spawn', null, null, 'warrior')"
-              >
-                +Warrior
-              </button>
-              <button
-                id="b-sar"
-                class="btn-act orders-full-span"
-                onclick="sendAct('spawn', null, null, 'archer')"
-              >
-                +Archer
-              </button>
-            </div>
-          </div>
-
-          <button
-            id="b-stats"
-            class="btn-act btn-stats"
-            onclick="openStatsModal()"
-          >
-            Statistics
-          </button>
-          <button
-            id="b-end"
-            class="btn-act btn-end"
-            onclick="sendAct('end_turn')"
-          >
-            End Turn
-          </button>
-          <div style="display: flex; gap: 6px; margin-top: 4px">
+          <div class="game-footer-buttons">
             <button
-              id="b-surrender"
-              class="btn-act btn-surrender"
-              onclick="confirmSurrender()"
+              id="b-stats"
+              class="btn-act btn-stats"
+              onclick="openStatsModal()"
             >
-              Surrender
+              Statistics
             </button>
             <button
-              id="b-backlobby"
-              class="btn-act"
-              style="background: #576574"
-              onclick="roomAction('leave')"
+              id="b-end"
+              class="btn-act btn-end"
+              onclick="sendAct('end_turn')"
             >
-              Leave
+              End Turn
             </button>
+            <div class="footer-sub-row">
+              <button
+                id="b-surrender"
+                class="btn-act btn-surrender"
+                onclick="confirmSurrender()"
+              >
+                Surrender
+              </button>
+              <button
+                id="b-backlobby"
+                class="btn-act btn-leave-secondary"
+                onclick="roomAction('leave')"
+              >
+                Leave
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -333,15 +241,7 @@
             Close
           </button>
         </div>
-        <div
-          id="stats-summary"
-          style="
-            font-size: 12px;
-            color: #c8d6e5;
-            margin-bottom: 8px;
-            line-height: 1.4;
-          "
-        ></div>
+        <div id="stats-summary" class="stats-summary-bar"></div>
         <canvas id="effChart" height="125"></canvas>
       </div>
     </div>
@@ -362,6 +262,6 @@
       </div>
     </div>
 
-    <script src="/static/game.js?v=6"></script>
+    <script src="/static/game.js?v=7"></script>
   </body>
 </html>
