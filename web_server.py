@@ -10,7 +10,7 @@ import threading
 from typing import Optional
 import numpy as np
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
@@ -65,6 +65,21 @@ CASTLE_POSITIONS = {
     3: (0, 0),
     4: (GRID_SIZE - 1, GRID_SIZE - 1)
 }
+
+
+def select_ai_opponent(player_rating: float) -> dict:
+    target = float(player_rating) + 3.50
+    if PoolRegistry is not None:
+        if hasattr(PoolRegistry, "select_opponent_for_rating"):
+            return PoolRegistry.select_opponent_for_rating(float(player_rating))
+        if hasattr(PoolRegistry, "select_closest_generation"):
+            return PoolRegistry.select_closest_generation(target)
+    return {
+        "gen_id": "gen_10",
+        "label": "Gen-10",
+        "filename": "generation_10.zip",
+        "rating": round(target, 2)
+    }
 
 
 def load_locale(lang: str) -> dict:
@@ -261,7 +276,7 @@ class Unit:
         self.c = int(c)
         self.faction = int(faction)
         self.u_type = str(u_type)
-        stats = UNIT_STATS[self.u_type]
+        stats = UNIT_STATS.get(self.u_type, {"max_hp": 4.0, "move_range": 2, "atk_range": 1, "dmg": 1.0, "cost": 3.0, "upkeep": 0.4})
         self.max_hp = float(stats["max_hp"])
         self.hp = float(self.max_hp)
         self.move_range = int(stats["move_range"])
@@ -296,7 +311,7 @@ class Structure:
         self.c = int(c)
         self.owner = int(owner)
         self.s_type = int(s_type)
-        stats = STRUCT_STATS[self.s_type]
+        stats = STRUCT_STATS.get(self.s_type, {"max_hp": 8.0, "atk_range": 2, "dmg": 2.0, "cost": 4.0})
         self.max_hp = float(stats["max_hp"])
         self.hp = float(self.max_hp)
         self.atk_range = int(stats["atk_range"])
@@ -480,7 +495,7 @@ class GameSession:
     def _get_valid_build_tiles(self, u: Unit, b_type: int) -> list:
         if not u or u.u_type != "worker" or not u.ready or u.moved or u.attacked:
             return []
-        cost = float(STRUCT_STATS[b_type]["cost"])
+        cost = float(STRUCT_STATS.get(b_type, {"cost": 4.0})["cost"])
         if self.factions[u.faction]["gold"] + 1e-9 < cost:
             return []
         valid = []
@@ -500,14 +515,23 @@ class GameSession:
                 return st
         return None
 
-    def _get_valid_moves(self, u: Unit) -> list:
+    def _path_capture_score(self, faction: int, path: list) -> float:
+        score = 0.0
+        for pr, pc in path:
+            if self.territory[pr, pc] != faction:
+                score += 1.0 + self._effective_tile_yield(pr, pc)
+        return score
+
+    def _get_valid_move_paths(self, u: Unit) -> dict:
         if not u or not u.ready or u.moved:
-            return []
-        visited = {(u.r, u.c): 0}
-        queue = [(u.r, u.c, 0)]
-        valid = []
+            return {}
+        best_dist = {(u.r, u.c): 0}
+        best_path = {(u.r, u.c): []}
+        queue = [(u.r, u.c, 0, [])]
+        valid_paths = {}
+
         while queue:
-            cr, cc, dist = queue.pop(0)
+            cr, cc, dist, path = queue.pop(0)
             if dist >= u.move_range:
                 continue
             for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
@@ -531,12 +555,36 @@ class GameSession:
                 other_u = self.units.get((nr, nc))
                 if other_u and other_u.faction != u.faction:
                     continue
-                if (nr, nc) not in visited or visited[(nr, nc)] > dist + 1:
-                    visited[(nr, nc)] = dist + 1
-                    queue.append((nr, nc, dist + 1))
+
+                ndist = dist + 1
+                npath = path + [(nr, nc)]
+                prev_d = best_dist.get((nr, nc))
+
+                if prev_d is None or ndist < prev_d:
+                    best_dist[(nr, nc)] = ndist
+                    best_path[(nr, nc)] = npath
+                    queue.append((nr, nc, ndist, npath))
                     if other_u is None:
-                        valid.append([nr, nc])
-        return valid
+                        valid_paths[(nr, nc)] = npath
+                elif ndist == prev_d:
+                    if self._path_capture_score(u.faction, npath) > self._path_capture_score(u.faction, best_path[(nr, nc)]):
+                        best_path[(nr, nc)] = npath
+                        queue.append((nr, nc, ndist, npath))
+                        if other_u is None:
+                            valid_paths[(nr, nc)] = npath
+
+        return valid_paths
+
+    def _get_valid_moves(self, u: Unit) -> list:
+        paths = self._get_valid_move_paths(u)
+        return [[pos[0], pos[1]] for pos in paths.keys()]
+
+    def _capture_along_path(self, u: Unit, start_pos: tuple, path: list):
+        steps = [start_pos] + list(path)
+        for sr, sc in steps:
+            if self.territory[sr, sc] != u.faction:
+                self.territory[sr, sc] = u.faction
+                u.tiles_captured += 1
 
     def _get_valid_attacks_for_unit(self, u: Unit) -> list:
         if not u or not u.ready or u.attacked:
@@ -741,12 +789,12 @@ class GameSession:
                 return self.get_state(for_faction=faction, lang=lang)
 
             if [tr_pos, tc_pos] in v_moves and u and u.faction == faction and u.ready and not u.moved:
+                move_paths = self._get_valid_move_paths(u)
+                chosen_path = move_paths.get((tr_pos, tc_pos), [(tr_pos, tc_pos)])
                 del self.units[(sr, sc)]
+                self._capture_along_path(u, (sr, sc), chosen_path)
                 u.r, u.c = tr_pos, tc_pos
                 u.moved = True
-                if self.territory[tr_pos, tc_pos] != faction:
-                    self.territory[tr_pos, tc_pos] = faction
-                    u.tiles_captured += 1
                 self.units[(tr_pos, tc_pos)] = u
                 sel["pos"] = [tr_pos, tc_pos]
                 self._recompute_selection(faction)
@@ -785,7 +833,7 @@ class GameSession:
             if not u or u.faction != faction or u.u_type != "worker" or not u.ready or u.moved or u.attacked:
                 return self.get_state(for_faction=faction, lang=lang)
             b_type = 1 if param == "tower" else 2
-            cost = float(STRUCT_STATS[b_type]["cost"])
+            cost = float(STRUCT_STATS.get(b_type, {"cost": 4.0})["cost"])
             if self.factions[faction]["gold"] + 1e-9 < cost:
                 return self.get_state(for_faction=faction, lang=lang)
 
@@ -1004,7 +1052,7 @@ class GameSession:
                     b_tiles = self._get_valid_build_tiles(u, b_type)
                     if b_tiles:
                         br, bc = b_tiles[0]
-                        cost = float(STRUCT_STATS[b_type]["cost"])
+                        cost = float(STRUCT_STATS.get(b_type, {"cost": 4.0})["cost"])
                         self.factions[ai_faction]["gold"] = round(self.factions[ai_faction]["gold"] - cost, 4)
                         self.structs[(br, bc)] = Structure(br, bc, ai_faction, b_type, ready=False)
                         self.territory[br, bc] = ai_faction
@@ -1014,7 +1062,8 @@ class GameSession:
                         u.builds_done += 1
                         continue
 
-            v_moves = self._get_valid_moves(u)
+            move_paths = self._get_valid_move_paths(u)
+            v_moves = [[pos[0], pos[1]] for pos in move_paths.keys()]
             if v_moves:
                 enemy_castles = [fd["castle_pos"] for fk, fd in self.factions.items() if fd["alive"] and fk != ai_faction]
                 target_goal = enemy_castles[0] if enemy_castles else (GRID_SIZE // 2, GRID_SIZE // 2)
@@ -1023,18 +1072,17 @@ class GameSession:
                     v_moves,
                     key=lambda m: (
                         abs(m[0] - target_goal[0]) + abs(m[1] - target_goal[1])
-                        - (2.5 if self.territory[m[0], m[1]] != ai_faction else 0.0)
+                        - self._path_capture_score(ai_faction, move_paths.get((m[0], m[1]), [(m[0], m[1])])) * 2.2
                         - self._effective_tile_yield(m[0], m[1]) * 4.0
                     )
                 )
                 old_r, old_c = u.r, u.c
                 nr, nc = best_m
+                chosen_path = move_paths.get((nr, nc), [(nr, nc)])
                 del self.units[(old_r, old_c)]
+                self._capture_along_path(u, (old_r, old_c), chosen_path)
                 u.r, u.c = nr, nc
                 u.moved = True
-                if self.territory[nr, nc] != ai_faction:
-                    self.territory[nr, nc] = ai_faction
-                    u.tiles_captured += 1
                 self.units[(nr, nc)] = u
                 moves_cnt += 1
                 self.ai_traces.append({"from": [old_r, old_c], "to": [nr, nc], "kind": "move"})
@@ -1101,19 +1149,27 @@ class GameSession:
             m_obs = self.match_obs_by_faction.get(fk, [])
             m_acts = self.match_acts_by_faction.get(fk, [])
             m_effs = self.match_effs_by_faction.get(fk, [])
-            if m_obs:
+            if m_obs and OnlineEvolutionEngine is not None:
                 self.is_training_new_gen = True
                 self.last_evolution_report = {"status": "training", "samples": len(m_obs)}
 
                 def _bg_evolve(u_name=uname, p_rating=prof["base_rating"], obs_l=m_obs, acts_l=m_acts, effs_l=m_effs):
                     try:
-                        entry = OnlineEvolutionEngine.evolve_and_benchmark_from_match(
-                            username=u_name,
-                            player_rating=p_rating,
-                            match_obs=np.array(obs_l, dtype=np.float32),
-                            match_actions=np.array(acts_l, dtype=np.int64),
-                            match_efficiencies=np.array(effs_l, dtype=np.float32)
-                        )
+                        try:
+                            entry = OnlineEvolutionEngine.evolve_and_benchmark_from_match(
+                                username=u_name,
+                                player_rating=p_rating,
+                                match_obs=np.array(obs_l, dtype=np.float32),
+                                match_actions=np.array(acts_l, dtype=np.int64),
+                                match_efficiencies=np.array(effs_l, dtype=np.float32)
+                            )
+                        except TypeError:
+                            entry = OnlineEvolutionEngine.evolve_and_benchmark_from_match(
+                                match_obs=obs_l,
+                                match_acts=acts_l,
+                                match_weights=effs_l,
+                                username=u_name
+                            )
                         if entry:
                             self.active_gen_label = entry.get("label", self.active_gen_label)
                             self.active_rating = float(entry.get("rating", self.active_rating))
@@ -1350,7 +1406,7 @@ class Room:
             if f == 2:
                 self.slots.append({"faction": f, "kind": "human", "username": host, "ai_rating": 0.0, "ai_entry": None})
             elif fill_ai:
-                ai_entry = PoolRegistry.select_opponent_for_rating(host_rating)
+                ai_entry = select_ai_opponent(host_rating)
                 ai_lbl = f"AI [{ai_entry.get('label', 'Gen-Base')}]"
                 self.slots.append({
                     "faction": f,
@@ -1513,7 +1569,8 @@ def on_server_startup():
         CloudBackupManager.restore_from_github()
     except Exception as e:
         print(f"[Startup] Backup restore skipped: {e}")
-    PoolRegistry.ensure_initialized()
+    if PoolRegistry is not None and hasattr(PoolRegistry, "ensure_initialized"):
+        PoolRegistry.ensure_initialized()
 
 
 @app.get("/api/init_user")
@@ -1622,7 +1679,7 @@ def api_rooms(payload: RoomActionPayload):
                     target_f = int(payload.slot_faction or 0)
                     target_s = next((s for s in rm.slots if s["faction"] == target_f), None)
                     if target_s and target_s["kind"] == "empty":
-                        ai_entry = PoolRegistry.select_opponent_for_rating(float(prof.get("base_rating", PLAYER_INITIAL_RATING)))
+                        ai_entry = select_ai_opponent(float(prof.get("base_rating", PLAYER_INITIAL_RATING)))
                         target_s["kind"] = "ai"
                         target_s["username"] = f"AI [{ai_entry.get('label', 'Gen-Base')}]"
                         target_s["ai_rating"] = float(ai_entry.get("rating", PLAYER_INITIAL_RATING))
@@ -1731,5 +1788,6 @@ def export_models_archive():
 
 
 if __name__ == "__main__":
-    PoolRegistry.ensure_initialized()
+    if PoolRegistry is not None and hasattr(PoolRegistry, "ensure_initialized"):
+        PoolRegistry.ensure_initialized()
     uvicorn.run(app, host="0.0.0.0", port=8000)
