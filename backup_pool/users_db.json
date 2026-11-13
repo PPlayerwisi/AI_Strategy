@@ -50,13 +50,14 @@
     "is_registered": true,
     "password_hash": "708317825be03026d0798a1efb024217d5fa44b8822cdfa76cd87866fcf28d4d",
     "lang": "en",
-    "base_rating": 66.5,
-    "matches_played": 2,
+    "base_rating": 57.83,
+    "matches_played": 3,
     "recent_wins": [
       0.0,
-      1.0
+      1.0,
+      0.0
     ],
-    "prev_winrate": 0.5,
+    "prev_winrate": 0.3333,
     "created_generations": []
   },
   "Brutal1": {
