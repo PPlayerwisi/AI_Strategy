@@ -513,4 +513,17 @@ class OnlineEvolutionEngine:
             doctrine_alignment=mean_doctrine_alignment
         )
         entry["w_gauntlet"] = round(w_gauntlet * 100.00, 2)
+
+        entry = PoolRegistry.register_new_generation(
+            label=label,
+            filename=filename,
+            rating=r_assigned,
+            origin=f"player:{username}",
+            doctrine_alignment=mean_doctrine_alignment
+        )
+        entry["w_gauntlet"] = round(w_gauntlet * 100.00, 2)
+
+        from cloud_backup import CloudBackupManager
+        CloudBackupManager.backup_new_generation_async(entry, os.path.join(POOL_DIR, filename))
+
         return entry

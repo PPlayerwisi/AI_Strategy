@@ -241,6 +241,9 @@ class UserProfileManager:
             db[uname] = merged
             UserProfileManager._save_unlocked(db)
 
+        from cloud_backup import CloudBackupManager
+        CloudBackupManager.sync_users_db_async()
+
     @staticmethod
     def set_user_lang(username: str, lang: str) -> dict:
         uname = str(username).strip()
@@ -1404,6 +1407,12 @@ def api_perform_action(req: ActionRequest):
             room.end_turn_for_faction(my_f)
 
         return room.serialize_for_user(uname, lang)
+
+@app.on_event("startup")
+def on_server_startup():
+    from cloud_backup import CloudBackupManager
+    CloudBackupManager.restore_from_github()
+    PoolRegistry.ensure_initialized()
 
 @app.get("/", response_class=HTMLResponse)
 def serve_index():
