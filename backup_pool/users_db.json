@@ -31,7 +31,7 @@
   },
   "Danulo": {
     "username": "Danulo",
-    "base_rating": 10.0,
+    "base_rating": 14.5,
     "matches_played": 6,
     "recent_wins": [
       0.0,
@@ -46,7 +46,8 @@
     "is_registered": 1,
     "password_hash": "1d0a1f586b11942792b7a62f109d0c464910f34229ce749ab81b218d60ad21f7",
     "lang": "en",
-    "matches": 1
+    "matches": 2,
+    "wins": 1
   },
   "kov": {
     "username": "kov",
