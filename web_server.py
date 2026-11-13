@@ -16,19 +16,25 @@ from pydantic import BaseModel
 import uvicorn
 
 from game_config import (
-    GRID_SIZE, MAX_TURNS, STARTING_GOLD, CASTLE_MAX_HP,
-    TERRAIN_MOUNTAIN, TERRAIN_PLAIN, TERRAIN_FERTILE, TERRAIN_GOLD,
-    BASE_TILE_YIELDS, UNIT_STATS, STRUCT_STATS,
-    SUPPLY_FREE_LIMIT, SUPPLY_TAX_PER_UNIT,
+    GRID_SIZE, MAX_STEPS, INITIAL_GOLD, CASTLE_MAX_HP,
+    TILE_VALUES, UNIT_STATS, STRUCT_STATS,
+    SUPPLY_LIMIT, SUPPLY_TAX_PER_UNIT,
     DISBAND_REFUND_RATIO, DEMOLISH_REFUND_RATIO,
     MIN_TRAINING_EFFICIENCY, MAX_WORKERS_PER_FACTION,
-    POOL_DIR, USERS_DB_FILE, PLAYER_INITIAL_RATING
+    POOL_DIR, USERS_DB_FILE
 )
-from ai_pool import PoolRegistry, HumanTelemetryStore, OnlineEvolutionEngine
+from ai_pool import PoolRegistry, OnlineEvolutionEngine
 from ai_strategist import (
     StrategicMapAnalyzer, HeuristicFallbackBot,
     encode_state_from_live, compute_unit_efficiency
 )
+
+PLAYER_INITIAL_RATING = 10.00
+TERRAIN_MOUNTAIN = 0
+TERRAIN_PLAIN = 1
+TERRAIN_FERTILE = 2
+TERRAIN_GOLD = 3
+BASE_TILE_YIELDS = TILE_VALUES
 
 app = FastAPI()
 os.makedirs("static", exist_ok=True)
@@ -294,7 +300,7 @@ class GameSession:
         self.max_players = int(max_players)
         self.slots_config = slots_config
         self.turn = 1
-        self.max_turns = int(MAX_TURNS)
+        self.max_turns = int(MAX_STEPS)
         self.match_finished = False
         self.winner_faction = None
         self.winner_name = ""
@@ -353,7 +359,7 @@ class GameSession:
                 "controller": s["username"],
                 "kind": s["kind"],
                 "ai_entry": s.get("ai_entry"),
-                "gold": float(STARTING_GOLD),
+                "gold": float(INITIAL_GOLD),
                 "castle_hp": float(CASTLE_MAX_HP),
                 "castle_pos": (cr, cc),
                 "alive": True
@@ -423,8 +429,8 @@ class GameSession:
         f_units = [u for u in self.units.values() if u.faction == faction]
         army_cnt = len(f_units)
         upk = sum(u.upkeep for u in f_units)
-        if army_cnt > SUPPLY_FREE_LIMIT:
-            upk += (army_cnt - SUPPLY_FREE_LIMIT) * SUPPLY_TAX_PER_UNIT
+        if army_cnt > SUPPLY_LIMIT:
+            upk += (army_cnt - SUPPLY_LIMIT) * SUPPLY_TAX_PER_UNIT
         net = inc - upk
         return tiles_cnt, round(inc, 4), army_cnt, round(upk, 4), round(net, 4)
 
@@ -1090,11 +1096,6 @@ class GameSession:
 
                 def _bg_evolve(u_name=uname, p_rating=prof["base_rating"], obs_l=m_obs, acts_l=m_acts, effs_l=m_effs):
                     try:
-                        HumanTelemetryStore.append_samples(
-                            np.array(obs_l, dtype=np.float32),
-                            np.array(acts_l, dtype=np.int64),
-                            np.array(effs_l, dtype=np.float32)
-                        )
                         entry = OnlineEvolutionEngine.evolve_and_benchmark_from_match(
                             username=u_name,
                             player_rating=p_rating,
