@@ -851,6 +851,24 @@
       "origin": "player:kov",
       "doctrine_alignment": 93.42,
       "created_at": 1794572195
+    },
+    {
+      "gen_id": "gen_evo_106_1794573726",
+      "label": "Gen-106-H (Danulo)",
+      "filename": "generation_human_106_64.zip",
+      "rating": 64.09,
+      "origin": "player:Danulo",
+      "doctrine_alignment": 93.42,
+      "created_at": 1794573726
+    },
+    {
+      "gen_id": "gen_evo_107_1794573726",
+      "label": "Gen-106-H (Danulo)",
+      "filename": "generation_human_106_64.zip",
+      "rating": 64.09,
+      "origin": "player:Danulo",
+      "doctrine_alignment": 93.42,
+      "created_at": 1794573726
     }
   ]
 }
