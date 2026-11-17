@@ -1015,13 +1015,13 @@
       "created_at": 1794921702
     },
     {
-      "gen_id": "gen_evo_124_1794923178",
+      "gen_id": "gen_evo_124_1794923418",
       "label": "Gen-124-H (AI_Sim)",
-      "filename": "generation_human_124_64.zip",
-      "rating": 63.73,
+      "filename": "generation_human_124_62.zip",
+      "rating": 61.5,
       "origin": "player:AI_Sim",
-      "doctrine_alignment": 91.55,
-      "created_at": 1794923178
+      "doctrine_alignment": 92.79,
+      "created_at": 1794923418
     }
   ]
 }
