@@ -57,7 +57,8 @@ class ModelCache:
             self.cache.pop(norm_path, None)
 
 
-GLOBAL_MODEL_CACHE = ModelCache(max_size=4)
+GLOBAL_MODEL_CACHE = ModelCache(max_size=3
+EVOLUTION_LOCK = threading.Lock())
 
 
 class PoolRegistry:
@@ -379,6 +380,9 @@ def predict_masked_action(
         return int(sampled)
 
 
+EVOLUTION_LOCK = threading.Lock()
+
+
 class OnlineEvolutionEngine:
     @staticmethod
     def _evaluate_candidate_vs_gen100(candidate_model: PPO, gen100_model: PPO) -> float:
@@ -387,7 +391,7 @@ class OnlineEvolutionEngine:
         scores = []
         for _ in range(2):
             eval_env.reset()
-            for _ in range(24):
+            for _ in range(22):
                 eval_env.set_faction_competence(1, 1.05)
                 eval_env.set_curriculum_tier(5)
                 eval_env.execute_full_ai_turn(faction=1, model=candidate_model, deterministic=False)
@@ -418,216 +422,221 @@ class OnlineEvolutionEngine:
         match_weights=None,
         match_roles: list = None
     ) -> dict:
-        from microrts_env import MicroRTSEnv
-        os.makedirs(POOL_DIR, exist_ok=True)
-        PoolRegistry.ensure_initialized()
+        if not EVOLUTION_LOCK.acquire(blocking=False):
+            return None
+        try:
+            from microrts_env import MicroRTSEnv
+            os.makedirs(POOL_DIR, exist_ok=True)
+            PoolRegistry.ensure_initialized()
 
-        raw_obs = match_obs if match_obs is not None else []
-        raw_acts = match_actions if match_actions is not None else (match_acts if match_acts is not None else [])
-        raw_weights = match_efficiencies if match_efficiencies is not None else (match_weights if match_weights is not None else [])
+            raw_obs = match_obs if match_obs is not None else []
+            raw_acts = match_actions if match_actions is not None else (match_acts if match_acts is not None else [])
+            raw_weights = match_efficiencies if match_efficiencies is not None else (match_weights if match_weights is not None else [])
 
-        dummy_env = MicroRTSEnv(mode="selfplay", record_telemetry=False, num_players=2)
-        latest_path = os.path.join(POOL_DIR, "latest_checkpoint.zip")
-        gen100_path = os.path.join(POOL_DIR, "generation_100.zip")
+            dummy_env = MicroRTSEnv(mode="selfplay", record_telemetry=False, num_players=2)
+            latest_path = os.path.join(POOL_DIR, "latest_checkpoint.zip")
+            gen100_path = os.path.join(POOL_DIR, "generation_100.zip")
 
-        gen100_model = GLOBAL_MODEL_CACHE.get_model(gen100_path)
-        model = None
-        if os.path.exists(latest_path):
-            try:
-                model = PPO.load(latest_path, env=dummy_env, device="cpu", verbose=0)
-            except Exception:
-                model = None
-
-        if model is None and os.path.exists(gen100_path):
-            try:
-                model = PPO.load(gen100_path, env=dummy_env, device="cpu", verbose=0)
-            except Exception:
-                model = None
-
-        if model is None:
-            gens = PoolRegistry.get_all_generations()
-            existing = [g for g in gens if os.path.exists(os.path.join(POOL_DIR, g["filename"]))]
-            if existing:
-                top_g = max(existing, key=lambda x: float(x["rating"]))
+            gen100_model = GLOBAL_MODEL_CACHE.get_model(gen100_path)
+            model = None
+            if os.path.exists(latest_path):
                 try:
-                    model = PPO.load(os.path.join(POOL_DIR, top_g["filename"]), env=dummy_env, device="cpu", verbose=0)
+                    model = PPO.load(latest_path, env=None, device="cpu", verbose=0)
                 except Exception:
                     model = None
 
-        if model is None:
-            model = PPO("MlpPolicy", dummy_env, verbose=0, learning_rate=0.0005, n_steps=512, batch_size=128, ent_coef=0.02, device="cpu")
+            if model is None and os.path.exists(gen100_path):
+                try:
+                    model = PPO.load(gen100_path, env=None, device="cpu", verbose=0)
+                except Exception:
+                    model = None
 
-        obs_list = [np.asarray(o, dtype=np.float32) for o in raw_obs if np.asarray(o).shape == (18, 18, 18)]
-        acts_list = [int(a) for o, a in zip(raw_obs, raw_acts) if np.asarray(o).shape == (18, 18, 18)]
-        weights_list = [float(w) for o, w in zip(raw_obs, raw_weights) if np.asarray(o).shape == (18, 18, 18)]
+            if model is None:
+                gens = PoolRegistry.get_all_generations()
+                existing = [g for g in gens if os.path.exists(os.path.join(POOL_DIR, g["filename"]))]
+                if existing:
+                    top_g = max(existing, key=lambda x: float(x["rating"]))
+                    try:
+                        model = PPO.load(os.path.join(POOL_DIR, top_g["filename"]), env=None, device="cpu", verbose=0)
+                    except Exception:
+                        model = None
 
-        if match_roles is not None and len(match_roles) == len(obs_list):
-            roles_list = [int(r) for r in match_roles]
-        else:
-            roles_list = [infer_role_id_from_obs(o, int(a)) for o, a in zip(obs_list, acts_list)]
+            if model is None:
+                model = PPO("MlpPolicy", dummy_env, verbose=0, learning_rate=0.0005, n_steps=128, batch_size=64, ent_coef=0.02, device="cpu")
 
-        if os.path.exists(HUMAN_TELEMETRY_FILE):
-            try:
-                data = np.load(HUMAN_TELEMETRY_FILE)
-                if len(data['obs']) > 0:
-                    take_n = min(192, len(data['obs']))
-                    idx = np.random.choice(len(data['obs']), size=take_n, replace=False)
-                    f_obs = data['obs'][idx]
-                    f_acts = data['acts'][idx]
-                    f_weights = data['weights'][idx]
-                    if 'roles' in data and len(data['roles']) == len(data['obs']):
-                        f_roles = data['roles'][idx]
-                    else:
-                        f_roles = [infer_role_id_from_obs(o, int(a)) for o, a in zip(f_obs, f_acts)]
-                    obs_list.extend(f_obs)
-                    acts_list.extend(f_acts)
-                    weights_list.extend(f_weights)
-                    roles_list.extend(f_roles)
-            except Exception:
-                pass
+            obs_list = [np.asarray(o, dtype=np.float32) for o in raw_obs if np.asarray(o).shape == (18, 18, 18)]
+            acts_list = [int(a) for o, a in zip(raw_obs, raw_acts) if np.asarray(o).shape == (18, 18, 18)]
+            weights_list = [float(w) for o, w in zip(raw_obs, raw_weights) if np.asarray(o).shape == (18, 18, 18)]
 
-        obs_list, acts_list, weights_list, roles_list = balance_samples_by_role(
-            obs_list, acts_list, weights_list, roles_list, max_per_role=140
-        )
-
-        doctrine_scores = [
-            dummy_env.evaluate_sample_doctrine_compliance(o, int(a), role_id=int(r))
-            for o, a, r in zip(obs_list, acts_list, roles_list)
-        ] if len(obs_list) > 0 else [1.00]
-        mean_doctrine_alignment = round(float(np.mean(doctrine_scores)) * 100.00, 2)
-
-        if len(obs_list) > 0:
-            obs_t = torch.as_tensor(np.array(obs_list, dtype=np.float32), device=model.device)
-            acts_t = torch.as_tensor(np.array(acts_list, dtype=np.int64), device=model.device)
-            weights_t = torch.as_tensor(np.array(weights_list, dtype=np.float32), device=model.device)
-            roles_t = torch.as_tensor(np.array(roles_list, dtype=np.int64), device=model.device)
-            doc_t = torch.as_tensor(np.array(doctrine_scores, dtype=np.float32), device=model.device)
-            role_masks_t = build_role_action_mask_tensor(roles_t, model.device)
-
-            if gen100_model is not None:
-                with torch.no_grad():
-                    g100_dist = gen100_model.policy.get_distribution(obs_t)
-                    g100_logits = g100_dist.distribution.logits.clone()
-                    g100_logits[~role_masks_t] = -1e8
-                    g100_acts_t = torch.argmax(g100_logits, dim=-1)
+            if match_roles is not None and len(match_roles) == len(obs_list):
+                roles_list = [int(r) for r in match_roles]
             else:
-                g100_acts_t = acts_t.clone()
+                roles_list = [infer_role_id_from_obs(o, int(a)) for o, a in zip(obs_list, acts_list)]
 
-            base_state_dict = copy.deepcopy(model.policy.state_dict())
-            ce_loss_fn = nn.CrossEntropyLoss(reduction='none')
-            batch_sz = min(128, len(obs_t))
+            if os.path.exists(HUMAN_TELEMETRY_FILE):
+                try:
+                    data = np.load(HUMAN_TELEMETRY_FILE)
+                    if len(data['obs']) > 0:
+                        take_n = min(160, len(data['obs']))
+                        idx = np.random.choice(len(data['obs']), size=take_n, replace=False)
+                        f_obs = data['obs'][idx]
+                        f_acts = data['acts'][idx]
+                        f_weights = data['weights'][idx]
+                        if 'roles' in data and len(data['roles']) == len(data['obs']):
+                            f_roles = data['roles'][idx]
+                        else:
+                            f_roles = [infer_role_id_from_obs(o, int(a)) for o, a in zip(f_obs, f_acts)]
+                        obs_list.extend(f_obs)
+                        acts_list.extend(f_acts)
+                        weights_list.extend(f_weights)
+                        roles_list.extend(f_roles)
+                except Exception:
+                    pass
 
-            optimizer_pure = optim.Adam(model.policy.parameters(), lr=0.0008)
-            for _ in range(4):
-                perm = torch.randperm(len(obs_t))
-                for start_i in range(0, len(obs_t), batch_sz):
-                    b_idx = perm[start_i:start_i + batch_sz]
-                    dist = model.policy.get_distribution(obs_t[b_idx])
-                    logits = dist.distribution.logits.clone()
-                    logits[~role_masks_t[b_idx]] = -1e8
-                    ce = ce_loss_fn(logits, acts_t[b_idx])
-                    entropy = dist.entropy().mean()
-                    loss = torch.mean(ce * weights_t[b_idx]) - (0.02 * entropy)
-                    optimizer_pure.zero_grad()
-                    loss.backward()
-                    optimizer_pure.step()
-            pure_state_dict = copy.deepcopy(model.policy.state_dict())
-            score_pure = OnlineEvolutionEngine._evaluate_candidate_vs_gen100(model, gen100_model)
+            obs_list, acts_list, weights_list, roles_list = balance_samples_by_role(
+                obs_list, acts_list, weights_list, roles_list, max_per_role=120
+            )
 
-            model.policy.load_state_dict(base_state_dict)
-            optimizer_hybrid = optim.Adam(model.policy.parameters(), lr=0.0008)
-            for _ in range(5):
-                perm = torch.randperm(len(obs_t))
-                for start_i in range(0, len(obs_t), batch_sz):
-                    b_idx = perm[start_i:start_i + batch_sz]
-                    dist = model.policy.get_distribution(obs_t[b_idx])
-                    logits = dist.distribution.logits.clone()
-                    logits[~role_masks_t[b_idx]] = -1e8
-                    ce_human = ce_loss_fn(logits, acts_t[b_idx])
-                    ce_g100 = ce_loss_fn(logits, g100_acts_t[b_idx])
-                    entropy = dist.entropy().mean()
-                    hybrid_term = (doc_t[b_idx] * weights_t[b_idx] * ce_human) + ((1.00 - doc_t[b_idx]) * 2.50 * ce_g100)
-                    loss = torch.mean(hybrid_term) - (0.02 * entropy)
-                    optimizer_hybrid.zero_grad()
-                    loss.backward()
-                    optimizer_hybrid.step()
-            score_hybrid = OnlineEvolutionEngine._evaluate_candidate_vs_gen100(model, gen100_model)
+            doctrine_scores = [
+                dummy_env.evaluate_sample_doctrine_compliance(o, int(a), role_id=int(r))
+                for o, a, r in zip(obs_list, acts_list, roles_list)
+            ] if len(obs_list) > 0 else [1.00]
+            mean_doctrine_alignment = round(float(np.mean(doctrine_scores)) * 100.00, 2)
 
-            if score_pure > score_hybrid + 0.02:
-                model.policy.load_state_dict(pure_state_dict)
+            if len(obs_list) > 0:
+                obs_t = torch.as_tensor(np.array(obs_list, dtype=np.float32), device=model.device)
+                acts_t = torch.as_tensor(np.array(acts_list, dtype=np.int64), device=model.device)
+                weights_t = torch.as_tensor(np.array(weights_list, dtype=np.float32), device=model.device)
+                roles_t = torch.as_tensor(np.array(roles_list, dtype=np.int64), device=model.device)
+                doc_t = torch.as_tensor(np.array(doctrine_scores, dtype=np.float32), device=model.device)
+                role_masks_t = build_role_action_mask_tensor(roles_t, model.device)
 
-        all_gens = PoolRegistry.get_all_generations()
-        max_curr_rating = max(100.00, max(float(g["rating"]) for g in all_gens))
-        test_ratings = [25.00, 50.00, 75.00, 95.00, max_curr_rating]
+                if gen100_model is not None:
+                    with torch.no_grad():
+                        g100_dist = gen100_model.policy.get_distribution(obs_t)
+                        g100_logits = g100_dist.distribution.logits.clone()
+                        g100_logits[~role_masks_t] = -1e8
+                        g100_acts_t = torch.argmax(g100_logits, dim=-1)
+                else:
+                    g100_acts_t = acts_t.clone()
 
-        sim_env = MicroRTSEnv(mode="manual_p2", record_telemetry=False, num_players=2)
-        domination_scores = []
-        top_wins = 0.00
-        top_count = 0.00
+                base_state_dict = copy.deepcopy(model.policy.state_dict())
+                ce_loss_fn = nn.CrossEntropyLoss(reduction='none')
+                batch_sz = min(128, len(obs_t))
 
-        for opp_r in test_ratings:
-            sim_env.reset()
-            opp_entry = PoolRegistry.select_closest_generation(opp_r)
-            opp_model = GLOBAL_MODEL_CACHE.get_model(os.path.join(POOL_DIR, opp_entry.get("filename", "")))
-            opp_tier = max(1, min(5, int(round(opp_r / 20.00))))
-            opp_comp = float(np.clip(0.30 + (opp_r / 100.00) * 0.75, 0.25, 1.35))
+                optimizer_pure = optim.Adam(model.policy.parameters(), lr=0.0008)
+                for _ in range(4):
+                    perm = torch.randperm(len(obs_t))
+                    for start_i in range(0, len(obs_t), batch_sz):
+                        b_idx = perm[start_i:start_i + batch_sz]
+                        dist = model.policy.get_distribution(obs_t[b_idx])
+                        logits = dist.distribution.logits.clone()
+                        logits[~role_masks_t[b_idx]] = -1e8
+                        ce = ce_loss_fn(logits, acts_t[b_idx])
+                        entropy = dist.entropy().mean()
+                        loss = torch.mean(ce * weights_t[b_idx]) - (0.02 * entropy)
+                        optimizer_pure.zero_grad()
+                        loss.backward()
+                        optimizer_pure.step()
+                pure_state_dict = copy.deepcopy(model.policy.state_dict())
+                score_pure = OnlineEvolutionEngine._evaluate_candidate_vs_gen100(model, gen100_model)
 
-            for _ in range(24):
-                sim_env.set_faction_competence(1, 1.05)
-                sim_env.set_curriculum_tier(5)
-                sim_env.execute_full_ai_turn(faction=1, model=model, deterministic=False)
-                if sim_env.p2_castle_hp <= 0.00:
-                    break
+                model.policy.load_state_dict(base_state_dict)
+                optimizer_hybrid = optim.Adam(model.policy.parameters(), lr=0.0008)
+                for _ in range(4):
+                    perm = torch.randperm(len(obs_t))
+                    for start_i in range(0, len(obs_t), batch_sz):
+                        b_idx = perm[start_i:start_i + batch_sz]
+                        dist = model.policy.get_distribution(obs_t[b_idx])
+                        logits = dist.distribution.logits.clone()
+                        logits[~role_masks_t[b_idx]] = -1e8
+                        ce_human = ce_loss_fn(logits, acts_t[b_idx])
+                        ce_g100 = ce_loss_fn(logits, g100_acts_t[b_idx])
+                        entropy = dist.entropy().mean()
+                        hybrid_term = (doc_t[b_idx] * weights_t[b_idx] * ce_human) + ((1.00 - doc_t[b_idx]) * 2.50 * ce_g100)
+                        loss = torch.mean(hybrid_term) - (0.02 * entropy)
+                        optimizer_hybrid.zero_grad()
+                        loss.backward()
+                        optimizer_hybrid.step()
+                score_hybrid = OnlineEvolutionEngine._evaluate_candidate_vs_gen100(model, gen100_model)
 
-                sim_env.set_faction_competence(2, opp_comp)
-                sim_env.set_curriculum_tier(opp_tier)
-                sim_env.execute_full_ai_turn(faction=2, model=opp_model, deterministic=False)
-                if sim_env.p1_castle_hp <= 0.00:
-                    break
-                sim_env.turn_count += 1
+                if score_pure > score_hybrid + 0.02:
+                    model.policy.load_state_dict(pure_state_dict)
 
-            inc1, _, _, t1, u1 = sim_env.get_faction_economy_stats(1)
-            inc2, _, _, t2, u2 = sim_env.get_faction_economy_stats(2)
-            s_new = (sim_env.p1_castle_hp * 0.45) + (t1 * 0.30) + (inc1 * 4.50) + (u1 * 1.80)
-            s_opp = (sim_env.p2_castle_hp * 0.45) + (t2 * 0.30) + (inc2 * 4.50) + (u2 * 1.80)
-            p_win = s_new / max(0.01, s_new + s_opp)
-            domination_scores.append(p_win)
+            all_gens = PoolRegistry.get_all_generations()
+            max_curr_rating = max(100.00, max(float(g["rating"]) for g in all_gens))
+            test_ratings = [25.00, 55.00, 85.00, max_curr_rating]
 
-            if opp_r >= 90.00:
-                top_count += 1.00
-                if p_win >= 0.52:
-                    top_wins += 1.00
+            sim_env = MicroRTSEnv(mode="manual_p2", record_telemetry=False, num_players=2)
+            domination_scores = []
+            top_wins = 0.00
+            top_count = 0.00
 
-        w_gauntlet = float(np.mean(domination_scores))
-        r_opp_mean = float(np.mean(test_ratings))
-        b_over100 = (top_wins / max(1.00, top_count)) if w_gauntlet > 0.52 else 0.00
+            for opp_r in test_ratings:
+                sim_env.reset()
+                opp_entry = PoolRegistry.select_closest_generation(opp_r)
+                opp_model = GLOBAL_MODEL_CACHE.get_model(os.path.join(POOL_DIR, opp_entry.get("filename", "")))
+                opp_tier = max(1, min(5, int(round(opp_r / 20.00))))
+                opp_comp = float(np.clip(0.30 + (opp_r / 100.00) * 0.75, 0.25, 1.35))
 
-        r_assigned = max(10.00, round(r_opp_mean + ((w_gauntlet - 0.50) * 85.00) + (b_over100 * 14.00), 2))
+                for _ in range(22):
+                    sim_env.set_faction_competence(1, 1.05)
+                    sim_env.set_curriculum_tier(5)
+                    sim_env.execute_full_ai_turn(faction=1, model=model, deterministic=False)
+                    if sim_env.p2_castle_hp <= 0.00:
+                        break
 
-        gen_count = len(all_gens)
-        label = f"Gen-{gen_count}-H ({username})"
-        filename = f"generation_human_{gen_count}_{int(round(r_assigned))}.zip"
-        save_path = os.path.join(POOL_DIR, filename[:-4])
+                    sim_env.set_faction_competence(2, opp_comp)
+                    sim_env.set_curriculum_tier(opp_tier)
+                    sim_env.execute_full_ai_turn(faction=2, model=opp_model, deterministic=False)
+                    if sim_env.p1_castle_hp <= 0.00:
+                        break
+                    sim_env.turn_count += 1
 
-        model.save(save_path)
-        model.save(latest_path[:-4])
+                inc1, _, _, t1, u1 = sim_env.get_faction_economy_stats(1)
+                inc2, _, _, t2, u2 = sim_env.get_faction_economy_stats(2)
+                s_new = (sim_env.p1_castle_hp * 0.45) + (t1 * 0.30) + (inc1 * 4.50) + (u1 * 1.80)
+                s_opp = (sim_env.p2_castle_hp * 0.45) + (t2 * 0.30) + (inc2 * 4.50) + (u2 * 1.80)
+                p_win = s_new / max(0.01, s_new + s_opp)
+                domination_scores.append(p_win)
 
-        entry = PoolRegistry.register_new_generation(
-            label=label,
-            filename=filename,
-            rating=r_assigned,
-            origin=f"player:{username}",
-            doctrine_alignment=mean_doctrine_alignment
-        )
-        entry["w_gauntlet"] = round(w_gauntlet * 100.00, 2)
+                if opp_r >= 85.00:
+                    top_count += 1.00
+                    if p_win >= 0.52:
+                        top_wins += 1.00
 
-        try:
-            from cloud_backup import CloudBackupManager
-            CloudBackupManager.backup_new_generation_async(entry, os.path.join(POOL_DIR, filename))
-        except Exception as e:
-            print(f"[Backup] Trigger error: {e}")
+            w_gauntlet = float(np.mean(domination_scores))
+            r_opp_mean = float(np.mean(test_ratings))
+            b_over100 = (top_wins / max(1.00, top_count)) if w_gauntlet > 0.52 else 0.00
 
-        del dummy_env
-        del sim_env
-        gc.collect()
-        return entry
+            r_assigned = max(10.00, round(r_opp_mean + ((w_gauntlet - 0.50) * 85.00) + (b_over100 * 14.00), 2))
+
+            gen_count = len(all_gens)
+            label = f"Gen-{gen_count}-H ({username})"
+            filename = f"generation_human_{gen_count}_{int(round(r_assigned))}.zip"
+            save_path = os.path.join(POOL_DIR, filename[:-4])
+
+            model.save(save_path)
+            model.save(latest_path[:-4])
+
+            entry = PoolRegistry.register_new_generation(
+                label=label,
+                filename=filename,
+                rating=r_assigned,
+                origin=f"player:{username}",
+                doctrine_alignment=mean_doctrine_alignment
+            )
+            entry["w_gauntlet"] = round(w_gauntlet * 100.00, 2)
+
+            try:
+                from cloud_backup import CloudBackupManager
+                CloudBackupManager.backup_new_generation_async(entry, os.path.join(POOL_DIR, filename))
+            except Exception as e:
+                print(f"[Backup] Trigger error: {e}")
+
+            del dummy_env
+            del sim_env
+            gc.collect()
+            return entry
+        finally:
+            EVOLUTION_LOCK.release()

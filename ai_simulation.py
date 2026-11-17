@@ -1,4 +1,5 @@
 import os
+import json
 import copy
 import random
 import threading
@@ -9,12 +10,13 @@ from game_config import (
     GRID_SIZE, MAX_STEPS, MIN_TRAINING_EFFICIENCY,
     MIN_COMBAT_TRAINING_EFFICIENCY, DISBAND_REFUND_RATIO,
     DEMOLISH_REFUND_RATIO, UNIT_STATS, STRUCT_STATS,
-    POOL_DIR, ROLE_IDS
+    POOL_DIR
 )
 from microrts_env import MicroRTSEnv
 from ai_pool import PoolRegistry, OnlineEvolutionEngine, GLOBAL_MODEL_CACHE
 
 SIM_LOCK = threading.Lock()
+SIM_PERSIST_FILE = os.path.join(POOL_DIR, "sim_persist.json")
 
 
 class SimulationSession:
@@ -35,8 +37,53 @@ class SimulationSession:
         self.selected_pos = None
         self.history = []
         self.cursor = 0
+        self._load_persisted_stats()
         self.env = MicroRTSEnv(mode="manual_p2", record_telemetry=True, num_players=2)
         self._start_new_match()
+
+    def _load_persisted_stats(self):
+        if not os.path.exists(SIM_PERSIST_FILE):
+            return
+        try:
+            with open(SIM_PERSIST_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            u_data = data.get(self.username)
+            if isinstance(u_data, dict):
+                self.matches_played = int(u_data.get("matches_played", 0))
+                self.f1_wins = int(u_data.get("f1_wins", 0))
+                self.f2_wins = int(u_data.get("f2_wins", 0))
+                self.f1_rating_anchor = float(u_data.get("f1_rating_anchor", 75.00))
+                self.f2_rating_anchor = float(u_data.get("f2_rating_anchor", 75.00))
+                self.skip_evo_wait = bool(u_data.get("skip_evo_wait", False))
+                self.step_delay = float(u_data.get("step_delay", 0.50))
+        except Exception:
+            pass
+
+    def _save_persisted_stats(self):
+        try:
+            os.makedirs(POOL_DIR, exist_ok=True)
+            data = {}
+            if os.path.exists(SIM_PERSIST_FILE):
+                try:
+                    with open(SIM_PERSIST_FILE, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except Exception:
+                    data = {}
+            data[self.username] = {
+                "matches_played": int(self.matches_played),
+                "f1_wins": int(self.f1_wins),
+                "f2_wins": int(self.f2_wins),
+                "f1_rating_anchor": round(float(self.f1_rating_anchor), 2),
+                "f2_rating_anchor": round(float(self.f2_rating_anchor), 2),
+                "skip_evo_wait": bool(self.skip_evo_wait),
+                "step_delay": round(float(self.step_delay), 2)
+            }
+            tmp_path = SIM_PERSIST_FILE + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, SIM_PERSIST_FILE)
+        except Exception:
+            pass
 
     @property
     def f1_winrate(self) -> float:
@@ -160,15 +207,20 @@ class SimulationSession:
         else:
             self.f2_wins += 1
 
+        self._save_persisted_stats()
         self.env.add_event_log(
             f"Winner: F{self.winner_faction} ({self.winner_name}) | F1 WR: {self.f1_winrate:.2f}%"
         )
 
-        self.env.export_high_efficiency_telemetry(
-            winning_faction=self.winner_faction,
-            min_efficiency=MIN_COMBAT_TRAINING_EFFICIENCY
-        )
-        w_obs, w_acts, w_weights = self._collect_samples_with_fallback(self.winner_faction)
+        try:
+            self.env.export_high_efficiency_telemetry(
+                winning_faction=self.winner_faction,
+                min_efficiency=MIN_COMBAT_TRAINING_EFFICIENCY
+            )
+            w_obs, w_acts, w_weights = self._collect_samples_with_fallback(self.winner_faction)
+        except Exception:
+            w_obs, w_acts, w_weights = [], [], []
+
         w_rating = float(self.f1_rating_anchor if self.winner_faction == 1 else self.f2_rating_anchor)
 
         if len(w_obs) > 0 and not self.is_training_new_gen:
@@ -300,13 +352,13 @@ class SimulationSession:
             "match_finished": bool(self.match_finished),
             "winner_faction": self.winner_faction,
             "winner_name": self.winner_name,
-            "factions": copy.deepcopy(factions_out),
+            "factions": factions_out,
             "terrain": self.env.terrain.tolist(),
             "territory": self.env.territory.tolist(),
             "eff_yields": np.round(eff_grid, 2).tolist(),
             "units": units_out,
             "structs": structs_out,
-            "ai_traces": copy.deepcopy(self.env.last_ai_turn_traces),
+            "ai_traces": list(self.env.last_ai_turn_traces),
             "event_log": list(self.env.turn_event_log),
             "stats": st_stats
         }
@@ -324,7 +376,7 @@ class SimulationSession:
             return
         self._execute_single_faction_step(self.current_turn_faction)
         self.history.append(self._create_snapshot())
-        if len(self.history) > 200:
+        if len(self.history) > 60:
             self.history.pop(0)
         self.cursor = len(self.history) - 1
 
@@ -434,12 +486,13 @@ class SimulationManager:
     @staticmethod
     def handle_action(username: str, action: str, r: Optional[int] = None, c: Optional[int] = None, param: Optional[str] = None):
         with SIM_LOCK:
-            if action == "start":
-                SimulationManager.sessions[username] = SimulationSession(username)
-                return
             if action == "stop":
                 SimulationManager.sessions.pop(username, None)
                 return
+            if action == "start" or username not in SimulationManager.sessions:
+                SimulationManager.sessions[username] = SimulationSession(username)
+                if action == "start":
+                    return
             sess = SimulationManager.sessions.get(username)
             if not sess:
                 return
@@ -453,10 +506,12 @@ class SimulationManager:
                 sess.toggle_pause()
             elif action == "set_skip_evo_wait":
                 sess.skip_evo_wait = (str(param).lower() in ("1", "true", "yes"))
+                sess._save_persisted_stats()
             elif action == "set_delay":
                 try:
                     val = float(param) if param is not None else 0.50
                     sess.step_delay = round(max(0.0, min(10.0, val)), 2)
+                    sess._save_persisted_stats()
                 except Exception:
                     pass
             elif action == "select_tile":

@@ -1787,8 +1787,6 @@ class RoomManager:
 
     @staticmethod
     def build_user_state(username: str, lang: str = "en") -> dict:
-        RoomManager.check_disconnects()
-        RoomManager.touch_user(username)
         prof = UserProfileManager.get_profile(username)
         lang_code = lang or prof.get("lang", "en")
 
@@ -1800,6 +1798,9 @@ class RoomManager:
         )
         if sim_state is not None:
             return clean_for_json(sim_state)
+
+        RoomManager.check_disconnects()
+        RoomManager.touch_user(username)
 
         rid = RoomManager.user_to_room.get(username)
         if not rid or rid not in RoomManager.rooms:
@@ -2109,8 +2110,8 @@ async def api_leave_beacon(request: Request):
         uname = str(data.get("username", "")).strip()
         if uname:
             with ROOMS_LOCK:
-                SimulationManager.stop_for_user(uname)
-                RoomManager._remove_user_from_room_unlocked(uname, is_disconnect=True)
+                if not SimulationManager.has_active(uname):
+                    RoomManager._remove_user_from_room_unlocked(uname, is_disconnect=True)
     except Exception:
         pass
     return {"ok": True}
