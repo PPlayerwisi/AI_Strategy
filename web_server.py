@@ -22,6 +22,7 @@ from ai_simulation import SimulationManager
 
 GRID_SIZE = getattr(cfg, "GRID_SIZE", 18)
 MAX_STEPS = getattr(cfg, "MAX_STEPS", getattr(cfg, "MAX_TURNS", 300))
+MAX_GOLD = getattr(cfg, "MAX_GOLD", 100.00)
 INITIAL_GOLD = getattr(cfg, "INITIAL_GOLD", getattr(cfg, "STARTING_GOLD", 12.00))
 CASTLE_MAX_HP = getattr(cfg, "CASTLE_MAX_HP", 25.00)
 TILE_VALUES = getattr(cfg, "TILE_VALUES", getattr(cfg, "BASE_TILE_YIELDS", {0: 0.00, 1: 0.05, 2: 0.15, 3: 0.35}))
@@ -32,8 +33,37 @@ SUPPLY_TAX_PER_UNIT = getattr(cfg, "SUPPLY_TAX_PER_UNIT", 0.15)
 DISBAND_REFUND_RATIO = getattr(cfg, "DISBAND_REFUND_RATIO", 0.40)
 DEMOLISH_REFUND_RATIO = getattr(cfg, "DEMOLISH_REFUND_RATIO", 0.50)
 MIN_TRAINING_EFFICIENCY = getattr(cfg, "MIN_TRAINING_EFFICIENCY", 100.00)
+MIN_COMBAT_TRAINING_EFFICIENCY = getattr(cfg, "MIN_COMBAT_TRAINING_EFFICIENCY", 45.00)
+MIN_WORKERS_PER_FACTION = getattr(cfg, "MIN_WORKERS_PER_FACTION", 1)
 MAX_WORKERS_PER_FACTION = getattr(cfg, "MAX_WORKERS_PER_FACTION", 4)
+AI_BUILD_LOCK_TURNS = getattr(cfg, "AI_BUILD_LOCK_TURNS", 10)
+AUTO_SPAWN_NET_INCOME_THRESHOLD = getattr(cfg, "AUTO_SPAWN_NET_INCOME_THRESHOLD", 3.00)
+MIN_GOLD_RESERVE_FOR_DEFICIT_SPAWN = getattr(cfg, "MIN_GOLD_RESERVE_FOR_DEFICIT_SPAWN", 20.00)
+DEFICIT_RUNWAY_TURNS = getattr(cfg, "DEFICIT_RUNWAY_TURNS", 5)
+EFFICIENCY_REWARDS = getattr(cfg, "EFFICIENCY_REWARDS", {
+    "neutral_capture_base": 3.50,
+    "neutral_capture_yield_mult": 12.00,
+    "enemy_capture_base": 5.50,
+    "enemy_capture_yield_mult": 14.00,
+    "combat_capture_scale": 0.12,
+    "damage_dealt_mult": 4.50,
+    "unit_kill_bonus": 14.00,
+    "struct_kill_bonus": 11.00,
+    "castle_hit_bonus": 8.50,
+    "harvest_bonus_mult": 6.50,
+    "build_struct_bonus": 8.00,
+    "heal_mult": 0.80,
+    "retreat_penalty": 8.00,
+    "early_death_penalty": 5.00
+})
+ROLE_IDS = getattr(cfg, "ROLE_IDS", {"worker": 0, "warrior": 1, "archer": 2, "tower": 3, "spawn": 4})
+RELATIVE_OFFSETS = getattr(cfg, "RELATIVE_OFFSETS", [
+    (-1, 0), (1, 0), (0, -1), (0, 1),
+    (-2, 0), (2, 0), (0, -2), (0, 2),
+    (-1, -1), (-1, 1), (1, -1), (1, 1)
+])
 POOL_DIR = getattr(cfg, "POOL_DIR", "./selfplay_pool/")
+HUMAN_TELEMETRY_FILE = getattr(cfg, "HUMAN_TELEMETRY_FILE", os.path.join(POOL_DIR, "human_telemetry.npz"))
 USERS_DB_FILE = getattr(cfg, "USERS_DB_FILE", os.path.join(POOL_DIR, "users_db.json"))
 PLAYER_INITIAL_RATING = getattr(cfg, "PLAYER_INITIAL_RATING", 10.00)
 
@@ -45,8 +75,128 @@ BASE_TILE_YIELDS = TILE_VALUES
 
 PoolRegistry = getattr(ai_pool, "PoolRegistry", None)
 OnlineEvolutionEngine = getattr(ai_pool, "OnlineEvolutionEngine", None)
-encode_state_from_live = getattr(ai_strategist, "encode_state_from_live", lambda *a, **kw: np.zeros(128, dtype=np.float32))
-compute_unit_efficiency = getattr(ai_strategist, "compute_unit_efficiency", lambda *a, **kw: 0.0)
+GLOBAL_MODEL_CACHE = getattr(ai_pool, "GLOBAL_MODEL_CACHE", None)
+REGISTRY_LOCK = getattr(ai_pool, "REGISTRY_LOCK", threading.Lock())
+predict_masked_action = getattr(ai_pool, "predict_masked_action", None)
+transform_action_for_faction = getattr(ai_pool, "transform_action_for_faction", lambda a, f: int(a))
+infer_role_id_from_obs = getattr(ai_pool, "infer_role_id_from_obs", lambda o, a: 1)
+
+
+def _default_compute_unit_efficiency(
+    u_type: str,
+    dmg_dealt: float,
+    tiles_captured: int,
+    gold_harvested: float,
+    builds_done: int,
+    turns_alive: int
+) -> float:
+    role_mult = 1.85 if u_type != "worker" else 0.20
+    cap_scale = 1.00 if u_type == "worker" else float(EFFICIENCY_REWARDS.get("combat_capture_scale", 0.12))
+    dmg_score = float(dmg_dealt) * float(EFFICIENCY_REWARDS.get("damage_dealt_mult", 4.50)) * role_mult
+    cap_score = float(tiles_captured) * 5.30 * cap_scale
+    harv_score = float(gold_harvested) * float(EFFICIENCY_REWARDS.get("harvest_bonus_mult", 6.50))
+    build_score = float(builds_done) * float(EFFICIENCY_REWARDS.get("build_struct_bonus", 8.00))
+    alive_score = float(turns_alive) * 0.50
+    return round(max(0.00, dmg_score + cap_score + harv_score + build_score + alive_score), 2)
+
+
+def _default_encode_state_from_live(session, faction: int, pos: Optional[tuple] = None) -> np.ndarray:
+    f = int(faction)
+    obs = np.zeros((18, GRID_SIZE, GRID_SIZE), dtype=np.float32)
+
+    if pos is None:
+        sel = session.selected_by_faction.get(f)
+        if sel and sel.get("pos"):
+            pos = (int(sel["pos"][0]), int(sel["pos"][1]))
+        elif f in session.factions:
+            pos = session.factions[f]["castle_pos"]
+        else:
+            pos = (0, 0)
+
+    pr, pc = int(pos[0]), int(pos[1])
+    if 0 <= pr < GRID_SIZE and 0 <= pc < GRID_SIZE:
+        obs[0, pr, pc] = 1.00
+
+    obs[1] = (session.terrain == TERRAIN_MOUNTAIN).astype(np.float32)
+
+    for r in range(GRID_SIZE):
+        for c in range(GRID_SIZE):
+            obs[2, r, c] = session._effective_tile_yield(r, c)
+            if session.terrain[r, c] != TERRAIN_MOUNTAIN:
+                passable = 0
+                for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE and session.terrain[nr, nc] != TERRAIN_MOUNTAIN:
+                        passable += 1
+                if passable <= 2:
+                    obs[3, r, c] = 1.00
+                elif passable == 3:
+                    obs[3, r, c] = 0.40
+
+    obs[4] = (session.territory == f).astype(np.float32)
+    obs[5] = ((session.territory != 0) & (session.territory != f)).astype(np.float32)
+    obs[6] = (session.territory == 0).astype(np.float32)
+
+    for fk, fd in session.factions.items():
+        if not fd.get("alive"):
+            continue
+        cr, cc = fd["castle_pos"]
+        c_norm = float(fd["castle_hp"]) / float(CASTLE_MAX_HP)
+        if fk == f:
+            obs[7, cr, cc] = c_norm
+        else:
+            obs[8, cr, cc] = c_norm
+
+    ally_fp = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.float32)
+    enemy_fp = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.float32)
+
+    for st in session.structs.values():
+        s_norm = float(st.hp) / 10.00
+        if st.owner == f:
+            obs[7, st.r, st.c] = s_norm
+        else:
+            obs[8, st.r, st.c] = s_norm
+        if st.s_type == 1:
+            t_map = ally_fp if st.owner == f else enemy_fp
+            for dr, dc in RELATIVE_OFFSETS:
+                if abs(dr) + abs(dc) <= 2:
+                    nr, nc = st.r + dr, st.c + dc
+                    if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE:
+                        t_map[nr, nc] += float(st.dmg)
+
+    type_to_ch = {"worker": 0, "warrior": 1, "archer": 2}
+    for u in session.units.values():
+        ch_off = type_to_ch.get(u.u_type, 1)
+        u_norm = float(u.hp) / max(0.01, float(u.max_hp))
+        if u.faction == f:
+            obs[9 + ch_off, u.r, u.c] = u_norm
+        else:
+            obs[12 + ch_off, u.r, u.c] = u_norm
+
+        t_map = ally_fp if u.faction == f else enemy_fp
+        for dr, dc in RELATIVE_OFFSETS:
+            if abs(dr) + abs(dc) <= u.atk_range:
+                nr, nc = u.r + dr, u.c + dc
+                if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE:
+                    t_map[nr, nc] += float(u.dmg)
+
+    obs[15] = np.clip(ally_fp / 10.00, 0.00, 1.00)
+    obs[16] = np.clip(enemy_fp / 10.00, 0.00, 1.00)
+
+    my_gold = float(session.factions.get(f, {}).get("gold", 0.00))
+    obs[17, :, :] = min(1.00, my_gold / float(MAX_GOLD))
+
+    if f == 2:
+        obs = obs[:, ::-1, ::-1].copy()
+    elif f == 3:
+        obs = obs[:, ::-1, :].copy()
+    elif f == 4:
+        obs = obs[:, :, ::-1].copy()
+    return obs
+
+
+encode_state_from_live = getattr(ai_strategist, "encode_state_from_live", _default_encode_state_from_live)
+compute_unit_efficiency = getattr(ai_strategist, "compute_unit_efficiency", _default_compute_unit_efficiency)
 
 app = FastAPI()
 os.makedirs("static", exist_ok=True)
@@ -81,6 +231,46 @@ def select_ai_opponent(player_rating: float) -> dict:
         "filename": "generation_10.zip",
         "rating": round(target, 2)
     }
+
+
+def append_samples_to_human_telemetry(obs_list: list, acts_list: list, weights_list: list, roles_list: list):
+    if not obs_list:
+        return
+    try:
+        os.makedirs(POOL_DIR, exist_ok=True)
+        valid_tuples = [
+            (np.asarray(o, dtype=np.float32), int(a), float(w), int(r))
+            for o, a, w, r in zip(obs_list, acts_list, weights_list, roles_list)
+            if np.asarray(o).shape == (18, GRID_SIZE, GRID_SIZE)
+        ]
+        if not valid_tuples:
+            return
+        new_obs = np.array([t[0] for t in valid_tuples], dtype=np.float32)
+        new_acts = np.array([t[1] for t in valid_tuples], dtype=np.int64)
+        new_weights = np.array([t[2] for t in valid_tuples], dtype=np.float32)
+        new_roles = np.array([t[3] for t in valid_tuples], dtype=np.int64)
+
+        with REGISTRY_LOCK:
+            if os.path.exists(HUMAN_TELEMETRY_FILE):
+                try:
+                    data = np.load(HUMAN_TELEMETRY_FILE)
+                    old_obs = data["obs"]
+                    old_acts = data["acts"]
+                    old_weights = data["weights"]
+                    if "roles" in data and len(data["roles"]) == len(old_obs):
+                        old_roles = data["roles"]
+                    else:
+                        old_roles = np.array([infer_role_id_from_obs(o, int(a)) for o, a in zip(old_obs, old_acts)], dtype=np.int64)
+                    if old_obs.ndim == 4 and old_obs.shape[1:] == (18, GRID_SIZE, GRID_SIZE):
+                        new_obs = np.concatenate([old_obs, new_obs], axis=0)[-8000:]
+                        new_acts = np.concatenate([old_acts, new_acts], axis=0)[-8000:]
+                        new_weights = np.concatenate([old_weights, new_weights], axis=0)[-8000:]
+                        new_roles = np.concatenate([old_roles, new_roles], axis=0)[-8000:]
+                except Exception:
+                    pass
+            np.savez_compressed(HUMAN_TELEMETRY_FILE, obs=new_obs, acts=new_acts, weights=new_weights, roles=new_roles)
+    except Exception as e:
+        print(f"[Telemetry] Save error: {e}")
 
 
 def load_locale(lang: str) -> dict:
@@ -296,14 +486,14 @@ class Unit:
 
     @property
     def efficiency(self) -> float:
-        return compute_unit_efficiency(
+        return float(compute_unit_efficiency(
             self.u_type,
             self.dmg_dealt,
             self.tiles_captured,
             self.gold_harvested,
             self.builds_done,
             self.turns_alive
-        )
+        ))
 
 
 class Structure:
@@ -342,6 +532,7 @@ class GameSession:
         self.match_obs_by_faction = {}
         self.match_acts_by_faction = {}
         self.match_effs_by_faction = {}
+        self.match_roles_by_faction = {}
         self.stats_turns = [1]
         self.stats_factions_eff = {}
         self.active_gen_label = "Gen-Base"
@@ -398,6 +589,7 @@ class GameSession:
             self.match_obs_by_faction[f] = []
             self.match_acts_by_faction[f] = []
             self.match_effs_by_faction[f] = []
+            self.match_roles_by_faction[f] = []
             self.stats_factions_eff[str(f)] = [0.0]
 
             for dr in range(-2, 3):
@@ -595,18 +787,18 @@ class GameSession:
             for c in range(max(0, u.c - u.atk_range), min(GRID_SIZE, u.c + u.atk_range + 1)):
                 dist = abs(r - u.r) + abs(c - u.c)
                 if 1 <= dist <= u.atk_range:
+                    for fk, fd in self.factions.items():
+                        if fd["alive"] and fk != u.faction and fd["castle_pos"] == (r, c):
+                            targets.insert(0, [r, c])
+                            break
                     other_u = self.units.get((r, c))
-                    if other_u and other_u.faction != u.faction:
+                    if other_u and other_u.faction != u.faction and [r, c] not in targets:
                         targets.append([r, c])
                         continue
                     st = self.structs.get((r, c))
-                    if st and st.owner != u.faction:
+                    if st and st.owner != u.faction and [r, c] not in targets:
                         targets.append([r, c])
                         continue
-                    for fk, fd in self.factions.items():
-                        if fd["alive"] and fk != u.faction and fd["castle_pos"] == (r, c):
-                            targets.append([r, c])
-                            break
         return targets
 
     def _get_valid_attacks_for_tower(self, st: Structure) -> list:
@@ -645,16 +837,36 @@ class GameSession:
             sel["valid_moves"] = []
             sel["valid_attacks"] = []
 
-    def _record_human_sample_if_valid(self, faction: int, action_idx: int, u_eff: float):
+    def _record_human_sample_if_valid(self, faction: int, pos: tuple, world_action_idx: int, role_key: str, u_eff: float):
         try:
-            obs = encode_state_from_live(self, faction)
-            self.match_obs_by_faction[faction].append(obs)
-            self.match_acts_by_faction[faction].append(int(action_idx))
-            self.match_effs_by_faction[faction].append(float(max(u_eff, MIN_TRAINING_EFFICIENCY)))
-        except Exception:
-            pass
+            try:
+                obs = encode_state_from_live(self, faction, pos)
+            except TypeError:
+                obs = _default_encode_state_from_live(self, faction, pos)
+            if np.asarray(obs).shape != (18, GRID_SIZE, GRID_SIZE):
+                obs = _default_encode_state_from_live(self, faction, pos)
+            canonical_act = transform_action_for_faction(int(world_action_idx), int(faction))
+            role_id = int(ROLE_IDS.get(role_key, 1))
+            weight = round(1.50 + float(max(u_eff, MIN_COMBAT_TRAINING_EFFICIENCY)) / 60.00, 2)
+            self.match_obs_by_faction[faction].append(np.asarray(obs, dtype=np.float32))
+            self.match_acts_by_faction[faction].append(int(canonical_act))
+            self.match_effs_by_faction[faction].append(float(weight))
+            self.match_roles_by_faction[faction].append(role_id)
+        except Exception as e:
+            print(f"[SampleRecord] Error: {e}")
 
     def _apply_damage_at(self, attacker_faction: int, tr_pos: int, tc_pos: int, dmg: float, u_attacker: Optional[Unit] = None):
+        for fk, fd in self.factions.items():
+            if fd["alive"] and fk != attacker_faction and fd["castle_pos"] == (tr_pos, tc_pos):
+                dealt = min(fd["castle_hp"], float(dmg))
+                fd["castle_hp"] = round(fd["castle_hp"] - dealt, 4)
+                if u_attacker:
+                    u_attacker.dmg_dealt += dealt * 1.5
+                if fd["castle_hp"] <= 1e-5:
+                    fd["castle_hp"] = 0.0
+                    self._eliminate_faction(fk)
+                return dealt
+
         target_u = self.units.get((tr_pos, tc_pos))
         if target_u and target_u.faction != attacker_faction:
             dealt = min(target_u.hp, float(dmg))
@@ -674,17 +886,6 @@ class GameSession:
             if target_st.hp <= 1e-5:
                 del self.structs[(tr_pos, tc_pos)]
             return dealt
-
-        for fk, fd in self.factions.items():
-            if fd["alive"] and fk != attacker_faction and fd["castle_pos"] == (tr_pos, tc_pos):
-                dealt = min(fd["castle_hp"], float(dmg))
-                fd["castle_hp"] = round(fd["castle_hp"] - dealt, 4)
-                if u_attacker:
-                    u_attacker.dmg_dealt += dealt * 1.5
-                if fd["castle_hp"] <= 1e-5:
-                    fd["castle_hp"] = 0.0
-                    self._eliminate_faction(fk)
-                return dealt
         return 0.0
 
     def _eliminate_faction(self, faction: int):
@@ -775,14 +976,17 @@ class GameSession:
             v_atks = sel.get("valid_attacks", [])
 
             if [tr_pos, tc_pos] in v_atks:
+                dr_atk, dc_atk = tr_pos - sr, tc_pos - sc
+                atk_idx = (12 + RELATIVE_OFFSETS.index((dr_atk, dc_atk))) if (dr_atk, dc_atk) in RELATIVE_OFFSETS else 12
                 if u and u.faction == faction and u.ready and not u.attacked:
+                    self._record_human_sample_if_valid(faction, (sr, sc), atk_idx, u.u_type, u.efficiency + 15.0)
                     dealt = self._apply_damage_at(faction, tr_pos, tc_pos, u.dmg, u_attacker=u)
                     u.attacked = True
                     u.ready = False
-                    self._record_human_sample_if_valid(faction, 2, u.efficiency)
                     self._log(tr(lang, "messages", "player_attack", dmg=dealt, r=tr_pos, c=tc_pos))
                     self._recompute_selection(faction)
                 elif st and st.owner == faction and st.s_type == 1 and st.ready:
+                    self._record_human_sample_if_valid(faction, (sr, sc), atk_idx, "tower", MIN_TRAINING_EFFICIENCY)
                     dealt = self._apply_damage_at(faction, tr_pos, tc_pos, st.dmg)
                     st.ready = False
                     self._log(tr(lang, "messages", "player_attack", dmg=dealt, r=tr_pos, c=tc_pos))
@@ -790,6 +994,9 @@ class GameSession:
                 return self.get_state(for_faction=faction, lang=lang)
 
             if [tr_pos, tc_pos] in v_moves and u and u.faction == faction and u.ready and not u.moved:
+                dr_mv, dc_mv = tr_pos - sr, tc_pos - sc
+                mv_idx = RELATIVE_OFFSETS.index((dr_mv, dc_mv)) if (dr_mv, dc_mv) in RELATIVE_OFFSETS else 0
+                self._record_human_sample_if_valid(faction, (sr, sc), mv_idx, u.u_type, u.efficiency + 10.0)
                 move_paths = self._get_valid_move_paths(u)
                 chosen_path = move_paths.get((tr_pos, tc_pos), [(tr_pos, tc_pos)])
                 del self.units[(sr, sc)]
@@ -801,13 +1008,13 @@ class GameSession:
                 self._recompute_selection(faction)
                 if not sel["valid_attacks"]:
                     u.ready = False
-                self._record_human_sample_if_valid(faction, 1, u.efficiency)
                 u_name = tr(lang, "units", u.u_type)
                 self._log(tr(lang, "messages", "player_move", unit=u_name, r=tr_pos, c=tc_pos))
                 return self.get_state(for_faction=faction, lang=lang)
 
         elif action_type == "heal":
             if u and u.faction == faction and u.ready and not u.moved and not u.attacked and u.hp < u.max_hp:
+                self._record_human_sample_if_valid(faction, (sr, sc), 24, u.u_type, u.efficiency)
                 gain = min(u.max_hp - u.hp, u.max_hp * 0.25)
                 u.hp = round(u.hp + gain, 4)
                 u.moved = True
@@ -820,13 +1027,13 @@ class GameSession:
             if u and u.faction == faction and u.u_type == "worker" and u.ready and not u.moved and not u.attacked:
                 tile_y = self._effective_tile_yield(u.r, u.c)
                 if tile_y > 0:
+                    self._record_human_sample_if_valid(faction, (sr, sc), 25, "worker", u.efficiency + 12.0)
                     bonus = round(tile_y * 1.5, 4)
-                    self.factions[faction]["gold"] = round(self.factions[faction]["gold"] + bonus, 4)
+                    self.factions[faction]["gold"] = round(min(MAX_GOLD, self.factions[faction]["gold"] + bonus), 4)
                     u.gold_harvested += bonus
                     u.moved = True
                     u.attacked = True
                     u.ready = False
-                    self._record_human_sample_if_valid(faction, 3, u.efficiency)
                     self._log(tr(lang, "messages", "player_harvest", bonus=bonus))
                     self._recompute_selection(faction)
 
@@ -853,6 +1060,7 @@ class GameSession:
                     continue
                 if not self._can_build_at(faction, br, bc, b_type):
                     continue
+                self._record_human_sample_if_valid(faction, (sr, sc), 26 if b_type == 1 else 27, "worker", u.efficiency + 15.0)
                 self.factions[faction]["gold"] = round(self.factions[faction]["gold"] - cost, 4)
                 self.structs[(br, bc)] = Structure(br, bc, faction, b_type, ready=False)
                 self.territory[br, bc] = faction
@@ -864,7 +1072,6 @@ class GameSession:
                 break
 
             if built_pos is not None:
-                self._record_human_sample_if_valid(faction, 4 if b_type == 1 else 5, u.efficiency)
                 st_name = tr(lang, "structs", str(b_type))
                 self._log(tr(lang, "messages", "player_build", struct=st_name))
                 self._recompute_selection(faction)
@@ -872,10 +1079,11 @@ class GameSession:
         elif action_type == "demolish":
             target_st = self._find_demolishable_struct(u)
             if target_st:
+                self._record_human_sample_if_valid(faction, (sr, sc), 29, "worker", u.efficiency)
                 refund = round(target_st.cost * DEMOLISH_REFUND_RATIO, 4)
                 st_name = tr(lang, "structs", str(target_st.s_type))
                 del self.structs[(target_st.r, target_st.c)]
-                self.factions[faction]["gold"] = round(self.factions[faction]["gold"] + refund, 4)
+                self.factions[faction]["gold"] = round(min(MAX_GOLD, self.factions[faction]["gold"] + refund), 4)
                 u.moved = True
                 u.attacked = True
                 u.ready = False
@@ -884,10 +1092,11 @@ class GameSession:
 
         elif action_type == "disband":
             if u and u.faction == faction:
+                self._record_human_sample_if_valid(faction, (sr, sc), 28, u.u_type, u.efficiency)
                 refund = round(u.cost * DISBAND_REFUND_RATIO, 4)
                 u_name = tr(lang, "units", u.u_type)
                 del self.units[(sr, sc)]
-                self.factions[faction]["gold"] = round(self.factions[faction]["gold"] + refund, 4)
+                self.factions[faction]["gold"] = round(min(MAX_GOLD, self.factions[faction]["gold"] + refund), 4)
                 self.selected_by_faction.pop(faction, None)
                 self._log(tr(lang, "messages", "player_disband", unit=u_name, refund=refund))
 
@@ -907,11 +1116,12 @@ class GameSession:
                     return self.get_state(for_faction=faction, lang=lang)
             cost = float(UNIT_STATS[u_type]["cost"])
             if self.factions[faction]["gold"] + 1e-9 >= cost:
+                sp_act = 27 if u_type == "worker" else (28 if u_type == "warrior" else 29)
+                self._record_human_sample_if_valid(faction, (sr, sc), sp_act, "spawn", MIN_TRAINING_EFFICIENCY)
                 self.factions[faction]["gold"] = round(self.factions[faction]["gold"] - cost, 4)
                 self.units[(sr, sc)] = Unit(sr, sc, faction, u_type, ready=False)
                 self.territory[sr, sc] = faction
-                self._record_human_sample_if_valid(faction, 0, MIN_TRAINING_EFFICIENCY)
-                u_name = tr(lang, "units", u.u_type)
+                u_name = tr(lang, "units", u_type)
                 self._log(tr(lang, "messages", "player_spawn", unit=u_name))
                 self._recompute_selection(faction)
 
@@ -957,13 +1167,36 @@ class GameSession:
             if st.owner == faction:
                 st.ready = True
 
+    def _prevent_ai_bankruptcy(self, ai_faction: int):
+        fd = self.factions.get(ai_faction)
+        if not fd or not fd["alive"]:
+            return
+        safety = 0
+        while safety < 16:
+            safety += 1
+            _, _, _, _, net = self._compute_economy_for_faction(ai_faction)
+            if fd["gold"] + net >= 0.0:
+                break
+            combat_u = [u for u in self.units.values() if u.faction == ai_faction and u.u_type in ("archer", "warrior")]
+            if not combat_u:
+                workers_u = [u for u in self.units.values() if u.faction == ai_faction and u.u_type == "worker"]
+                if len(workers_u) <= MIN_WORKERS_PER_FACTION:
+                    break
+                combat_u = workers_u
+            worst_u = max(combat_u, key=lambda unit: (unit.upkeep, -unit.hp))
+            refund = round(worst_u.cost * DISBAND_REFUND_RATIO, 4)
+            del self.units[(worst_u.r, worst_u.c)]
+            fd["gold"] = round(min(MAX_GOLD, fd["gold"] + refund), 4)
+
     def _process_global_round_end(self, lang: str = "en"):
         self.turn += 1
         for f, fd in self.factions.items():
             if not fd["alive"]:
                 continue
+            if fd["kind"] == "ai":
+                self._prevent_ai_bankruptcy(f)
             _, _, _, _, net = self._compute_economy_for_faction(f)
-            fd["gold"] = round(fd["gold"] + net, 4)
+            fd["gold"] = round(min(MAX_GOLD, fd["gold"] + net), 4)
             if fd["gold"] < -1e-5:
                 fd["gold"] = 0.0
                 to_del = [pos for pos, u in self.units.items() if u.faction == f]
@@ -1002,16 +1235,47 @@ class GameSession:
             self._advance_turn_and_round(lang)
             break
 
+    def _pick_best_ai_attack_target(self, ai_faction: int, atks: list) -> list:
+        enemy_castles = {
+            fd["castle_pos"]
+            for fk, fd in self.factions.items()
+            if fd["alive"] and fk != ai_faction
+        }
+        for tr_pos, tc_pos in atks:
+            if (tr_pos, tc_pos) in enemy_castles:
+                return [tr_pos, tc_pos]
+        best_t = atks[0]
+        best_sc = -1e9
+        for tr_pos, tc_pos in atks:
+            sc = 0.0
+            ou = self.units.get((tr_pos, tc_pos))
+            if ou:
+                sc += 50.0 + (ou.max_hp - ou.hp) * 4.0 + ou.cost * 2.5
+            ost = self.structs.get((tr_pos, tc_pos))
+            if ost:
+                sc += 35.0 + (ost.max_hp - ost.hp) * 3.0
+            if sc > best_sc:
+                best_sc = sc
+                best_t = [tr_pos, tc_pos]
+        return best_t
+
     def _execute_ai_turn(self, ai_faction: int, lang: str = "en"):
         self.ai_traces = []
         moves_cnt = 0
         atks_cnt = 0
+        self._prevent_ai_bankruptcy(ai_faction)
+
+        fd_ai = self.factions.get(ai_faction, {})
+        ai_entry = fd_ai.get("ai_entry") or {}
+        model = None
+        if GLOBAL_MODEL_CACHE is not None and ai_entry.get("filename"):
+            model = GLOBAL_MODEL_CACHE.get_model(os.path.join(POOL_DIR, ai_entry["filename"]))
 
         for pos, st in list(self.structs.items()):
             if st.owner == ai_faction and st.s_type == 1 and st.ready:
                 targets = self._get_valid_attacks_for_tower(st)
                 if targets:
-                    tr_pos, tc_pos = targets[0]
+                    tr_pos, tc_pos = self._pick_best_ai_attack_target(ai_faction, targets)
                     dealt = self._apply_damage_at(ai_faction, tr_pos, tc_pos, st.dmg)
                     st.ready = False
                     atks_cnt += 1
@@ -1020,7 +1284,14 @@ class GameSession:
                     if self.match_finished:
                         return
 
-        ai_units = [u for u in self.units.values() if u.faction == ai_faction and u.ready]
+        enemy_castles = [fd["castle_pos"] for fk, fd in self.factions.items() if fd["alive"] and fk != ai_faction]
+        primary_goal = enemy_castles[0] if enemy_castles else (GRID_SIZE // 2, GRID_SIZE // 2)
+
+        ai_units = sorted(
+            [u for u in self.units.values() if u.faction == ai_faction and u.ready],
+            key=lambda unit: (0 if unit.u_type in ("warrior", "archer") else 1, abs(unit.r - primary_goal[0]) + abs(unit.c - primary_goal[1]))
+        )
+
         for u in ai_units:
             if self.match_finished:
                 return
@@ -1029,7 +1300,7 @@ class GameSession:
 
             atks = self._get_valid_attacks_for_unit(u)
             if atks:
-                tr_pos, tc_pos = atks[0]
+                tr_pos, tc_pos = self._pick_best_ai_attack_target(ai_faction, atks)
                 dealt = self._apply_damage_at(ai_faction, tr_pos, tc_pos, u.dmg, u_attacker=u)
                 u.attacked = True
                 u.ready = False
@@ -1039,20 +1310,20 @@ class GameSession:
 
             if u.u_type == "worker":
                 tile_y = self._effective_tile_yield(u.r, u.c)
-                if tile_y >= 0.15 and random.random() < 0.55:
+                if tile_y >= 0.15 and self.factions[ai_faction]["gold"] < 15.0 and random.random() < 0.48:
                     bonus = round(tile_y * 1.5, 4)
-                    self.factions[ai_faction]["gold"] = round(self.factions[ai_faction]["gold"] + bonus, 4)
+                    self.factions[ai_faction]["gold"] = round(min(MAX_GOLD, self.factions[ai_faction]["gold"] + bonus), 4)
                     u.gold_harvested += bonus
                     u.moved = True
                     u.attacked = True
                     u.ready = False
                     continue
 
-                if self.factions[ai_faction]["gold"] >= 6.0 and random.random() < 0.30:
-                    b_type = 2 if (self.factions[ai_faction]["gold"] >= 7.5 and random.random() < 0.45) else 1
+                if self.turn > AI_BUILD_LOCK_TURNS and self.factions[ai_faction]["gold"] >= 10.0 and random.random() < 0.25:
+                    b_type = 2 if (self.factions[ai_faction]["gold"] >= 12.0 and random.random() < 0.50) else 1
                     b_tiles = self._get_valid_build_tiles(u, b_type)
                     if b_tiles:
-                        br, bc = b_tiles[0]
+                        br, bc = min(b_tiles, key=lambda p: abs(p[0] - primary_goal[0]) + abs(p[1] - primary_goal[1]))
                         cost = float(STRUCT_STATS.get(b_type, {"cost": 4.0})["cost"])
                         self.factions[ai_faction]["gold"] = round(self.factions[ai_faction]["gold"] - cost, 4)
                         self.structs[(br, bc)] = Structure(br, bc, ai_faction, b_type, ready=False)
@@ -1066,19 +1337,42 @@ class GameSession:
             move_paths = self._get_valid_move_paths(u)
             v_moves = [[pos[0], pos[1]] for pos in move_paths.keys()]
             if v_moves:
-                enemy_castles = [fd["castle_pos"] for fk, fd in self.factions.items() if fd["alive"] and fk != ai_faction]
-                target_goal = enemy_castles[0] if enemy_castles else (GRID_SIZE // 2, GRID_SIZE // 2)
+                chosen_dest = None
+                if model is not None and predict_masked_action is not None and random.random() < 0.60:
+                    try:
+                        obs = _default_encode_state_from_live(self, ai_faction, (u.r, u.c))
+                        c_mask = np.zeros(30, dtype=bool)
+                        c_to_dest = {}
+                        for mr, mc in v_moves:
+                            dr, dc = mr - u.r, mc - u.c
+                            if (dr, dc) in RELATIVE_OFFSETS:
+                                w_act = RELATIVE_OFFSETS.index((dr, dc))
+                                c_act = transform_action_for_faction(w_act, ai_faction)
+                                c_mask[c_act] = True
+                                c_to_dest[c_act] = (mr, mc)
+                        if np.any(c_mask):
+                            c_chosen = predict_masked_action(model, obs, c_mask, deterministic=False, temperature=0.65)
+                            chosen_dest = c_to_dest.get(c_chosen)
+                    except Exception:
+                        chosen_dest = None
 
-                best_m = min(
-                    v_moves,
-                    key=lambda m: (
-                        abs(m[0] - target_goal[0]) + abs(m[1] - target_goal[1])
-                        - self._path_capture_score(ai_faction, move_paths.get((m[0], m[1]), [(m[0], m[1])])) * 2.2
-                        - self._effective_tile_yield(m[0], m[1]) * 4.0
+                if chosen_dest is not None:
+                    nr, nc = chosen_dest
+                else:
+                    dist_goal = abs(u.r - primary_goal[0]) + abs(u.c - primary_goal[1])
+                    siege_w = 2.6 if u.u_type in ("warrior", "archer") else 1.1
+                    if dist_goal <= 5 and u.u_type in ("warrior", "archer"):
+                        siege_w = 4.5
+                    nr, nc = min(
+                        v_moves,
+                        key=lambda m: (
+                            (abs(m[0] - primary_goal[0]) + abs(m[1] - primary_goal[1])) * siege_w
+                            - self._path_capture_score(ai_faction, move_paths.get((m[0], m[1]), [(m[0], m[1])])) * (2.4 if u.u_type == "worker" else 1.5)
+                            - self._effective_tile_yield(m[0], m[1]) * 3.2
+                        )
                     )
-                )
+
                 old_r, old_c = u.r, u.c
-                nr, nc = best_m
                 chosen_path = move_paths.get((nr, nc), [(nr, nc)])
                 del self.units[(old_r, old_c)]
                 self._capture_along_path(u, (old_r, old_c), chosen_path)
@@ -1090,13 +1384,14 @@ class GameSession:
 
                 post_atks = self._get_valid_attacks_for_unit(u)
                 if post_atks:
-                    tr_pos, tc_pos = post_atks[0]
+                    tr_pos, tc_pos = self._pick_best_ai_attack_target(ai_faction, post_atks)
                     dealt = self._apply_damage_at(ai_faction, tr_pos, tc_pos, u.dmg, u_attacker=u)
                     u.attacked = True
                     atks_cnt += 1
                     self.ai_traces.append({"from": [nr, nc], "to": [tr_pos, tc_pos], "kind": "attack"})
                 u.ready = False
 
+        _, _, army_now, _, net_now = self._compute_economy_for_faction(ai_faction)
         spawners = [self.factions[ai_faction]["castle_pos"]] + [
             (st.r, st.c) for st in self.structs.values() if st.owner == ai_faction and st.s_type == 2
         ]
@@ -1105,15 +1400,35 @@ class GameSession:
             if (sp_r, sp_c) in self.units:
                 continue
             gold = self.factions[ai_faction]["gold"]
+            extra_tax = SUPPLY_TAX_PER_UNIT if army_now >= SUPPLY_LIMIT else 0.0
+
+            def _is_spawn_safe(u_key: str) -> bool:
+                c_val = float(UNIT_STATS[u_key]["cost"])
+                u_upk = float(UNIT_STATS[u_key]["upkeep"]) + extra_tax
+                rem_gold = gold - c_val
+                if rem_gold < 0.0:
+                    return False
+                if net_now >= AUTO_SPAWN_NET_INCOME_THRESHOLD:
+                    return True
+                proj_net = net_now - u_upk
+                runway_gold = rem_gold + float(DEFICIT_RUNWAY_TURNS) * proj_net
+                if rem_gold >= MIN_GOLD_RESERVE_FOR_DEFICIT_SPAWN and runway_gold >= 5.0:
+                    return True
+                if proj_net >= 0.10:
+                    return True
+                if u_key != "worker" and army_now <= 3 and proj_net >= -0.35 and runway_gold >= 2.0:
+                    return True
+                return False
+
             choice = None
-            if w_cnt < 2 and gold >= UNIT_STATS["worker"]["cost"]:
+            if w_cnt < 2 and _is_spawn_safe("worker"):
                 choice = "worker"
                 w_cnt += 1
-            elif gold >= UNIT_STATS["archer"]["cost"] and random.random() < 0.45:
+            elif _is_spawn_safe("archer") and random.random() < 0.45:
                 choice = "archer"
-            elif gold >= UNIT_STATS["warrior"]["cost"]:
+            elif _is_spawn_safe("warrior"):
                 choice = "warrior"
-            elif w_cnt < MAX_WORKERS_PER_FACTION and gold >= UNIT_STATS["worker"]["cost"] and random.random() < 0.35:
+            elif w_cnt < MAX_WORKERS_PER_FACTION and _is_spawn_safe("worker") and random.random() < 0.40:
                 choice = "worker"
                 w_cnt += 1
 
@@ -1122,7 +1437,10 @@ class GameSession:
                 self.factions[ai_faction]["gold"] = round(self.factions[ai_faction]["gold"] - c_val, 4)
                 self.units[(sp_r, sp_c)] = Unit(sp_r, sp_c, ai_faction, choice, ready=False)
                 self.territory[sp_r, sp_c] = ai_faction
+                army_now += 1
+                net_now -= (float(UNIT_STATS[choice]["upkeep"]) + extra_tax)
 
+        self._prevent_ai_bankruptcy(ai_faction)
         self._log(tr(lang, "messages", "ai_turn_summary", turn=self.turn, moves=moves_cnt, atks=atks_cnt))
 
     def _finalize_match(self, winner_faction: int):
@@ -1147,30 +1465,28 @@ class GameSession:
                 prof["base_rating"] = round(max(10.0, float(prof.get("base_rating", PLAYER_INITIAL_RATING)) - 2.0), 2)
             UserProfileManager.update_profile(uname, prof)
 
-            m_obs = self.match_obs_by_faction.get(fk, [])
-            m_acts = self.match_acts_by_faction.get(fk, [])
-            m_effs = self.match_effs_by_faction.get(fk, [])
-            if m_obs and OnlineEvolutionEngine is not None:
+            m_obs = list(self.match_obs_by_faction.get(fk, []))
+            m_acts = list(self.match_acts_by_faction.get(fk, []))
+            m_effs = list(self.match_effs_by_faction.get(fk, []))
+            m_roles = list(self.match_roles_by_faction.get(fk, []))
+
+            if m_obs:
+                append_samples_to_human_telemetry(m_obs, m_acts, m_effs, m_roles)
+
+            if m_obs and OnlineEvolutionEngine is not None and not self.is_training_new_gen:
                 self.is_training_new_gen = True
                 self.last_evolution_report = {"status": "training", "samples": len(m_obs)}
 
-                def _bg_evolve(u_name=uname, p_rating=prof["base_rating"], obs_l=m_obs, acts_l=m_acts, effs_l=m_effs):
+                def _bg_evolve(u_name=uname, p_rating=prof["base_rating"], obs_l=m_obs, acts_l=m_acts, effs_l=m_effs, roles_l=m_roles):
                     try:
-                        try:
-                            entry = OnlineEvolutionEngine.evolve_and_benchmark_from_match(
-                                username=u_name,
-                                player_rating=p_rating,
-                                match_obs=np.array(obs_l, dtype=np.float32),
-                                match_actions=np.array(acts_l, dtype=np.int64),
-                                match_efficiencies=np.array(effs_l, dtype=np.float32)
-                            )
-                        except TypeError:
-                            entry = OnlineEvolutionEngine.evolve_and_benchmark_from_match(
-                                match_obs=obs_l,
-                                match_acts=acts_l,
-                                match_weights=effs_l,
-                                username=u_name
-                            )
+                        entry = OnlineEvolutionEngine.evolve_and_benchmark_from_match(
+                            username=u_name,
+                            player_rating=p_rating,
+                            match_obs=obs_l,
+                            match_actions=acts_l,
+                            match_efficiencies=effs_l,
+                            match_roles=roles_l
+                        )
                         if entry:
                             self.active_gen_label = entry.get("label", self.active_gen_label)
                             self.active_rating = float(entry.get("rating", self.active_rating))
@@ -1726,6 +2042,7 @@ def api_rooms(payload: RoomActionPayload):
         st = RoomManager.build_user_state(uname, lang=lang)
     return {"ok": True, "state": st}
 
+
 @app.post("/api/simulation")
 def api_simulation(payload: ActionPayload):
     uname = payload.username.strip()
@@ -1760,7 +2077,7 @@ def api_action(payload: ActionPayload):
 
     with ROOMS_LOCK:
         if SimulationManager.has_active(uname):
-            SimulationManager.handle_action(uname, payload.action_type, r=payload.r, c=payload.c)
+            SimulationManager.handle_action(uname, payload.action_type, r=payload.r, c=payload.c, param=payload.param)
             return RoomManager.build_user_state(uname, lang=lang)
 
         RoomManager.touch_user(uname)

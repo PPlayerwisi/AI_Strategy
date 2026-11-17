@@ -1,7 +1,9 @@
 import os
+import gc
 import json
 import time
 import copy
+import random
 import threading
 from collections import OrderedDict
 import numpy as np
@@ -23,8 +25,9 @@ torch.load = _permissive_torch_load
 
 REGISTRY_LOCK = threading.Lock()
 
+
 class ModelCache:
-    def __init__(self, max_size=8):
+    def __init__(self, max_size=4):
         self.cache = OrderedDict()
         self.max_size = max_size
         self.lock = threading.Lock()
@@ -32,22 +35,37 @@ class ModelCache:
     def get_model(self, path):
         if not path or not os.path.exists(path):
             return None
+        norm_path = os.path.abspath(path)
         with self.lock:
-            if path in self.cache:
-                self.cache.move_to_end(path)
-                return self.cache[path]
+            if norm_path in self.cache:
+                self.cache.move_to_end(norm_path)
+                return self.cache[norm_path]
             try:
-                model = PPO.load(path, env=None, device="cpu")
-                self.cache[path] = model
-                if len(self.cache) > self.max_size:
+                model = PPO.load(norm_path, env=None, device="cpu")
+                self.cache[norm_path] = model
+                while len(self.cache) > self.max_size:
                     self.cache.popitem(last=False)
                 return model
             except Exception:
                 return None
 
-GLOBAL_MODEL_CACHE = ModelCache(max_size=8)
+    def evict(self, path):
+        if not path:
+            return
+        norm_path = os.path.abspath(path)
+        with self.lock:
+            self.cache.pop(norm_path, None)
+
+
+GLOBAL_MODEL_CACHE = ModelCache(max_size=4)
+
 
 class PoolRegistry:
+    @staticmethod
+    def _bucket_index(rating: float) -> int:
+        r_clamped = max(0.0, min(99.99, float(rating)))
+        return int(r_clamped // 10.0)
+
     @staticmethod
     def ensure_initialized():
         os.makedirs(POOL_DIR, exist_ok=True)
@@ -78,8 +96,10 @@ class PoolRegistry:
 
     @staticmethod
     def _save_unlocked(registry_data):
-        with open(POOL_REGISTRY_FILE, "w", encoding="utf-8") as f:
+        tmp_path = POOL_REGISTRY_FILE + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(registry_data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp_path, POOL_REGISTRY_FILE)
 
     @staticmethod
     def get_all_generations():
@@ -94,48 +114,105 @@ class PoolRegistry:
         return max(100.00, max(float(g.get("rating", 100.00)) for g in gens))
 
     @staticmethod
-    def select_closest_generation(target_rating: float) -> dict:
+    def select_closest_generation(target_rating: float, randomize_top_k: int = 1) -> dict:
         gens = PoolRegistry.get_all_generations()
         available_with_files = [
             g for g in gens
-            if os.path.exists(os.path.join(POOL_DIR, g["filename"]))
-            and (g["filename"] != "generation_0.zip" or target_rating <= 12.00)
+            if os.path.exists(os.path.join(POOL_DIR, g.get("filename", "")))
+            and (g.get("filename") != "generation_0.zip" or target_rating <= 12.00)
         ]
         if available_with_files:
-            best_file_entry = min(available_with_files, key=lambda g: abs(float(g["rating"]) - float(target_rating)))
-            if abs(float(best_file_entry["rating"]) - float(target_rating)) <= 18.00 or str(best_file_entry.get("origin", "")).startswith("player:"):
+            sorted_files = sorted(
+                available_with_files,
+                key=lambda g: (
+                    abs(float(g.get("rating", 0.0)) - float(target_rating)),
+                    0 if str(g.get("origin", "")).startswith("player:") else 1
+                )
+            )
+            best_file_entry = sorted_files[0]
+            if abs(float(best_file_entry["rating"]) - float(target_rating)) <= 22.00 or str(best_file_entry.get("origin", "")).startswith("player:"):
+                if randomize_top_k > 1:
+                    near_pool = [
+                        g for g in sorted_files[:randomize_top_k]
+                        if abs(float(g["rating"]) - float(best_file_entry["rating"])) <= 10.00
+                    ]
+                    if near_pool:
+                        return dict(random.choice(near_pool))
                 return dict(best_file_entry)
 
-        best_entry = min(gens, key=lambda g: abs(float(g["rating"]) - float(target_rating)))
+        best_entry = min(gens, key=lambda g: abs(float(g.get("rating", 0.0)) - float(target_rating)))
         return dict(best_entry)
 
     @staticmethod
     def select_opponent_for_rating(player_rating: float) -> dict:
         target = float(player_rating) + 3.50
-        return PoolRegistry.select_closest_generation(target)
+        return PoolRegistry.select_closest_generation(target, randomize_top_k=3)
 
     @staticmethod
-    def enforce_pool_storage_limit(max_human_models: int = 25):
+    def enforce_pool_storage_limit(max_human_models: int = 25, newest_gen_id: str = None, new_rating: float = None) -> list:
         PoolRegistry.ensure_initialized()
+        removed_filenames = []
         with REGISTRY_LOCK:
-            with open(POOL_REGISTRY_FILE, "r", encoding="utf-8") as f:
-                reg = json.load(f)
+            try:
+                with open(POOL_REGISTRY_FILE, "r", encoding="utf-8") as f:
+                    reg = json.load(f)
+            except Exception:
+                return removed_filenames
 
-            human_gens = [g for g in reg["generations"] if str(g.get("origin", "")).startswith("player:")]
-            if len(human_gens) > max_human_models:
-                sorted_by_priority = sorted(
-                    human_gens,
-                    key=lambda g: (float(g.get("rating", 0.0)), int(g.get("created_at", 0)))
+            while True:
+                human_gens = [
+                    g for g in reg.get("generations", [])
+                    if str(g.get("origin", "")).startswith("player:")
+                ]
+                if len(human_gens) <= max_human_models:
+                    break
+
+                buckets = {}
+                for g in human_gens:
+                    b_idx = PoolRegistry._bucket_index(float(g.get("rating", 50.0)))
+                    buckets.setdefault(b_idx, []).append(g)
+
+                ref_r = float(new_rating) if new_rating is not None else float(human_gens[-1].get("rating", 50.0))
+                ref_bucket = PoolRegistry._bucket_index(ref_r)
+
+                candidates = [
+                    g for g in human_gens
+                    if g.get("gen_id") != newest_gen_id
+                    and (len(buckets.get(PoolRegistry._bucket_index(float(g.get("rating", 50.0))), [])) > 1 or PoolRegistry._bucket_index(float(g.get("rating", 50.0))) == ref_bucket)
+                ]
+                if not candidates:
+                    candidates = [g for g in human_gens if g.get("gen_id") != newest_gen_id]
+                if not candidates:
+                    break
+
+                to_remove = min(
+                    candidates,
+                    key=lambda g: (
+                        round(abs(float(g.get("rating", 0.0)) - ref_r) - 0.01 * len(buckets.get(PoolRegistry._bucket_index(float(g.get("rating", 0.0))), [])), 4),
+                        int(g.get("created_at", 0))
+                    )
                 )
-                to_remove = sorted_by_priority[0]
-                f_path = os.path.join(POOL_DIR, to_remove["filename"])
-                if os.path.exists(f_path):
-                    try:
-                        os.remove(f_path)
-                    except Exception:
-                        pass
-                reg["generations"] = [g for g in reg["generations"] if g["gen_id"] != to_remove["gen_id"]]
+
+                fname = to_remove.get("filename", "")
+                if fname:
+                    f_path = os.path.join(POOL_DIR, fname)
+                    GLOBAL_MODEL_CACHE.evict(f_path)
+                    if os.path.exists(f_path):
+                        try:
+                            os.remove(f_path)
+                        except Exception:
+                            pass
+                    removed_filenames.append(fname)
+
+                reg["generations"] = [
+                    g for g in reg["generations"]
+                    if g.get("gen_id") != to_remove.get("gen_id")
+                ]
+
+            if removed_filenames:
                 PoolRegistry._save_unlocked(reg)
+
+        return removed_filenames
 
     @staticmethod
     def register_new_generation(label: str, filename: str, rating: float, origin: str, doctrine_alignment: float = 100.00) -> dict:
@@ -155,8 +232,15 @@ class PoolRegistry:
             }
             reg["generations"].append(entry)
             PoolRegistry._save_unlocked(reg)
-        PoolRegistry.enforce_pool_storage_limit(max_human_models=25)
+
+        removed_files = PoolRegistry.enforce_pool_storage_limit(
+            max_human_models=25,
+            newest_gen_id=entry["gen_id"],
+            new_rating=entry["rating"]
+        )
+        entry["removed_files"] = removed_files
         return entry
+
 
 def transform_offset_for_faction(dr: int, dc: int, faction: int) -> tuple:
     f = int(faction)
@@ -167,6 +251,7 @@ def transform_offset_for_faction(dr: int, dc: int, faction: int) -> tuple:
     elif f == 4:
         return (int(dr), -int(dc))
     return (int(dr), int(dc))
+
 
 def transform_action_for_faction(action: int, faction: int) -> int:
     act = int(action)
@@ -185,7 +270,10 @@ def transform_action_for_faction(action: int, faction: int) -> int:
             return int(12 + RELATIVE_OFFSETS.index((tdr, tdc)))
     return act
 
+
 def infer_role_id_from_obs(obs_arr: np.ndarray, act_val: int) -> int:
+    if obs_arr.ndim != 3 or obs_arr.shape[0] < 12:
+        return ROLE_IDS["warrior"]
     pos_plane = obs_arr[0]
     coords = np.argwhere(pos_plane > 0.50)
     if len(coords) == 0:
@@ -201,6 +289,7 @@ def infer_role_id_from_obs(obs_arr: np.ndarray, act_val: int) -> int:
         return ROLE_IDS["spawn"]
     return ROLE_IDS["tower"]
 
+
 def is_action_valid_for_role(role_id: int, act_val: int) -> bool:
     if role_id in (ROLE_IDS["warrior"], ROLE_IDS["archer"]):
         return 0 <= act_val <= 24 or act_val == 28
@@ -211,6 +300,7 @@ def is_action_valid_for_role(role_id: int, act_val: int) -> bool:
     if role_id == ROLE_IDS["spawn"]:
         return act_val in (24, 27, 28, 29)
     return True
+
 
 def build_role_action_mask_tensor(roles_t: torch.Tensor, device) -> torch.Tensor:
     bsz = roles_t.shape[0]
@@ -228,15 +318,17 @@ def build_role_action_mask_tensor(roles_t: torch.Tensor, device) -> torch.Tensor
             mask[i, 25:27] = False
     return mask
 
+
 def balance_samples_by_role(obs_list: list, acts_list: list, weights_list: list, roles_list: list, max_per_role: int = 160):
     buckets = {}
     for o, a, w, r in zip(obs_list, acts_list, weights_list, roles_list):
+        o_arr = np.asarray(o, dtype=np.float32)
+        if o_arr.shape != (18, 18, 18):
+            continue
         rid = int(r)
         if not is_action_valid_for_role(rid, int(a)):
             continue
-        if rid not in buckets:
-            buckets[rid] = []
-        buckets[rid].append((o, int(a), float(w), rid))
+        buckets.setdefault(rid, []).append((o_arr, int(a), float(w), rid))
 
     b_obs, b_acts, b_weights, b_roles = [], [], [], []
     for rid, items in buckets.items():
@@ -250,6 +342,7 @@ def balance_samples_by_role(obs_list: list, acts_list: list, weights_list: list,
             b_roles.append(r_val)
 
     return b_obs, b_acts, b_weights, b_roles
+
 
 def predict_masked_action(
     model: PPO,
@@ -285,6 +378,7 @@ def predict_masked_action(
         sampled = torch.multinomial(probs, 1).item()
         return int(sampled)
 
+
 class OnlineEvolutionEngine:
     @staticmethod
     def _evaluate_candidate_vs_gen100(candidate_model: PPO, gen100_model: PPO) -> float:
@@ -293,7 +387,7 @@ class OnlineEvolutionEngine:
         scores = []
         for _ in range(2):
             eval_env.reset()
-            for _ in range(26):
+            for _ in range(24):
                 eval_env.set_faction_competence(1, 1.05)
                 eval_env.set_curriculum_tier(5)
                 eval_env.execute_full_ai_turn(faction=1, model=candidate_model, deterministic=False)
@@ -315,16 +409,22 @@ class OnlineEvolutionEngine:
 
     @staticmethod
     def evolve_and_benchmark_from_match(
-        username: str,
-        player_rating: float,
-        match_obs: np.ndarray,
-        match_actions: np.ndarray,
-        match_efficiencies: np.ndarray,
+        username: str = "Player",
+        player_rating: float = 50.0,
+        match_obs=None,
+        match_actions=None,
+        match_efficiencies=None,
+        match_acts=None,
+        match_weights=None,
         match_roles: list = None
     ) -> dict:
         from microrts_env import MicroRTSEnv
         os.makedirs(POOL_DIR, exist_ok=True)
         PoolRegistry.ensure_initialized()
+
+        raw_obs = match_obs if match_obs is not None else []
+        raw_acts = match_actions if match_actions is not None else (match_acts if match_acts is not None else [])
+        raw_weights = match_efficiencies if match_efficiencies is not None else (match_weights if match_weights is not None else [])
 
         dummy_env = MicroRTSEnv(mode="selfplay", record_telemetry=False, num_players=2)
         latest_path = os.path.join(POOL_DIR, "latest_checkpoint.zip")
@@ -357,9 +457,10 @@ class OnlineEvolutionEngine:
         if model is None:
             model = PPO("MlpPolicy", dummy_env, verbose=0, learning_rate=0.0005, n_steps=512, batch_size=128, ent_coef=0.02, device="cpu")
 
-        obs_list = list(match_obs)
-        acts_list = list(match_actions)
-        weights_list = list(match_efficiencies)
+        obs_list = [np.asarray(o, dtype=np.float32) for o in raw_obs if np.asarray(o).shape == (18, 18, 18)]
+        acts_list = [int(a) for o, a in zip(raw_obs, raw_acts) if np.asarray(o).shape == (18, 18, 18)]
+        weights_list = [float(w) for o, w in zip(raw_obs, raw_weights) if np.asarray(o).shape == (18, 18, 18)]
+
         if match_roles is not None and len(match_roles) == len(obs_list):
             roles_list = [int(r) for r in match_roles]
         else:
@@ -369,7 +470,7 @@ class OnlineEvolutionEngine:
             try:
                 data = np.load(HUMAN_TELEMETRY_FILE)
                 if len(data['obs']) > 0:
-                    take_n = min(256, len(data['obs']))
+                    take_n = min(192, len(data['obs']))
                     idx = np.random.choice(len(data['obs']), size=take_n, replace=False)
                     f_obs = data['obs'][idx]
                     f_acts = data['acts'][idx]
@@ -386,7 +487,7 @@ class OnlineEvolutionEngine:
                 pass
 
         obs_list, acts_list, weights_list, roles_list = balance_samples_by_role(
-            obs_list, acts_list, weights_list, roles_list, max_per_role=160
+            obs_list, acts_list, weights_list, roles_list, max_per_role=140
         )
 
         doctrine_scores = [
@@ -417,7 +518,7 @@ class OnlineEvolutionEngine:
             batch_sz = min(128, len(obs_t))
 
             optimizer_pure = optim.Adam(model.policy.parameters(), lr=0.0008)
-            for _ in range(5):
+            for _ in range(4):
                 perm = torch.randperm(len(obs_t))
                 for start_i in range(0, len(obs_t), batch_sz):
                     b_idx = perm[start_i:start_i + batch_sz]
@@ -435,7 +536,7 @@ class OnlineEvolutionEngine:
 
             model.policy.load_state_dict(base_state_dict)
             optimizer_hybrid = optim.Adam(model.policy.parameters(), lr=0.0008)
-            for _ in range(6):
+            for _ in range(5):
                 perm = torch.randperm(len(obs_t))
                 for start_i in range(0, len(obs_t), batch_sz):
                     b_idx = perm[start_i:start_i + batch_sz]
@@ -457,7 +558,7 @@ class OnlineEvolutionEngine:
 
         all_gens = PoolRegistry.get_all_generations()
         max_curr_rating = max(100.00, max(float(g["rating"]) for g in all_gens))
-        test_ratings = [20.00, 45.00, 70.00, 90.00, 100.00, max_curr_rating]
+        test_ratings = [25.00, 50.00, 75.00, 95.00, max_curr_rating]
 
         sim_env = MicroRTSEnv(mode="manual_p2", record_telemetry=False, num_players=2)
         domination_scores = []
@@ -471,7 +572,7 @@ class OnlineEvolutionEngine:
             opp_tier = max(1, min(5, int(round(opp_r / 20.00))))
             opp_comp = float(np.clip(0.30 + (opp_r / 100.00) * 0.75, 0.25, 1.35))
 
-            for _ in range(28):
+            for _ in range(24):
                 sim_env.set_faction_competence(1, 1.05)
                 sim_env.set_curriculum_tier(5)
                 sim_env.execute_full_ai_turn(faction=1, model=model, deterministic=False)
@@ -523,7 +624,10 @@ class OnlineEvolutionEngine:
         try:
             from cloud_backup import CloudBackupManager
             CloudBackupManager.backup_new_generation_async(entry, os.path.join(POOL_DIR, filename))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[Backup] Trigger error: {e}")
 
+        del dummy_env
+        del sim_env
+        gc.collect()
         return entry

@@ -12,6 +12,7 @@ from game_config import (
 
 BACKUP_LOCK = threading.Lock()
 
+
 class CloudBackupManager:
     @staticmethod
     def _get_github_config() -> dict:
@@ -118,6 +119,32 @@ class CloudBackupManager:
                 return True
             except Exception as ex:
                 print(f"[Backup] GitHub upload error for {remote_path}: {ex}")
+                return False
+
+    @staticmethod
+    def delete_file_from_github(remote_path: str, commit_msg: str = "Evict replaced model from pool") -> bool:
+        cfg = CloudBackupManager._get_github_config()
+        if not cfg["enabled"]:
+            return False
+
+        with BACKUP_LOCK:
+            repo = cfg["repo"]
+            branch = cfg["branch"]
+            token = cfg["token"]
+            api_url = f"https://api.github.com/repos/{repo}/contents/{remote_path}"
+            try:
+                info = CloudBackupManager._github_request(f"{api_url}?ref={branch}", token, method="GET")
+                sha = info.get("sha")
+                if not sha:
+                    return False
+                payload = {
+                    "message": commit_msg,
+                    "sha": sha,
+                    "branch": branch
+                }
+                CloudBackupManager._github_request(api_url, token, method="DELETE", payload=payload)
+                return True
+            except Exception:
                 return False
 
     @staticmethod
@@ -273,6 +300,13 @@ class CloudBackupManager:
             doc = float(entry.get("doctrine_alignment", 100.00))
             origin = entry.get("origin", "player")
             fname = os.path.basename(model_zip_path)
+            removed_files = entry.get("removed_files", [])
+
+            for old_fname in removed_files:
+                CloudBackupManager.delete_file_from_github(
+                    f"backup_pool/{old_fname}",
+                    commit_msg=f"Replace {old_fname} with {fname} (nearest rating)"
+                )
 
             gh_ok = False
             if os.path.exists(model_zip_path):
@@ -301,6 +335,7 @@ class CloudBackupManager:
                 )
 
             gh_status = "Збережено в GitHub" if gh_ok else "GitHub не налаштовано"
+            replaced_str = f"\n• **Замінено у пулі:** `{', '.join(removed_files)}`" if removed_files else ""
             msg = (
                 f"**Нова нейромережа еволюціонувала!**\n"
                 f"• **Покоління:** `{label}`\n"
@@ -308,7 +343,7 @@ class CloudBackupManager:
                 f"• **Gauntlet Winrate:** `{gauntlet:.2f}%`\n"
                 f"• **Відповідність доктрині:** `{doc:.2f}%`\n"
                 f"• **Джерело:** `{origin}`\n"
-                f"• **Бекап:** {gh_status}"
+                f"• **Бекап:** {gh_status}{replaced_str}"
             )
             CloudBackupManager.send_discord_notification(msg, model_file_path=model_zip_path)
             CloudBackupManager.send_telegram_notification(msg.replace("**", ""), model_file_path=model_zip_path)

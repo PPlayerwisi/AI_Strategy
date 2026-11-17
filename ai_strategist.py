@@ -2,19 +2,158 @@ import random
 import numpy as np
 
 from game_config import (
-    MAX_GOLD, SUPPLY_LIMIT, SUPPLY_TAX_PER_UNIT,
+    GRID_SIZE, MAX_GOLD, CASTLE_MAX_HP, TILE_VALUES,
+    SUPPLY_LIMIT, SUPPLY_TAX_PER_UNIT,
     MIN_WORKERS_PER_FACTION, MAX_WORKERS_PER_FACTION,
     AI_BUILD_LOCK_TURNS, AUTO_SPAWN_NET_INCOME_THRESHOLD,
     MIN_GOLD_RESERVE_FOR_DEFICIT_SPAWN,
     DEFICIT_RUNWAY_TURNS, EMERGENCY_RECOVERY_TARGET_UNITS,
     MIN_BARRACKS_CASTLE_DIST, MAX_SLOW_UNIT_FRONTLINE_DIST,
-    OSCILLATION_PENALTY, UNIT_STATS, STRUCT_STATS,
+    OSCILLATION_PENALTY, EFFICIENCY_REWARDS,
+    UNIT_STATS, STRUCT_STATS,
     RELATIVE_OFFSETS, ROLE_IDS
 )
 from ai_pool import (
     transform_action_for_faction, infer_role_id_from_obs,
     predict_masked_action
 )
+
+
+def compute_unit_efficiency(
+    u_type: str,
+    dmg_dealt: float,
+    tiles_captured: int,
+    gold_harvested: float,
+    builds_done: int,
+    turns_alive: int
+) -> float:
+    role_str = str(u_type)
+    combat_mult = 1.85 if role_str != "worker" else 0.20
+    cap_scale = 1.00 if role_str == "worker" else float(EFFICIENCY_REWARDS.get("combat_capture_scale", 0.12))
+
+    dmg_score = float(dmg_dealt) * float(EFFICIENCY_REWARDS.get("damage_dealt_mult", 4.50)) * combat_mult
+    cap_score = float(tiles_captured) * 5.30 * cap_scale
+    harv_score = float(gold_harvested) * float(EFFICIENCY_REWARDS.get("harvest_bonus_mult", 6.50))
+    build_score = float(builds_done) * float(EFFICIENCY_REWARDS.get("build_struct_bonus", 8.00))
+    survive_score = float(turns_alive) * 0.50
+
+    total = dmg_score + cap_score + harv_score + build_score + survive_score
+    return round(max(0.00, float(total)), 2)
+
+
+def encode_state_from_live(session, faction: int, pos: tuple = None) -> np.ndarray:
+    f = int(faction)
+    g_size = getattr(session, "grid_size", GRID_SIZE)
+    obs = np.zeros((18, g_size, g_size), dtype=np.float32)
+
+    if pos is None:
+        sel = getattr(session, "selected_by_faction", {}).get(f)
+        if sel and "pos" in sel:
+            pos = tuple(sel["pos"])
+        else:
+            fd_self = getattr(session, "factions", {}).get(f, {})
+            pos = tuple(fd_self.get("castle_pos", (g_size - 1, 0)))
+
+    pr, pc = int(pos[0]), int(pos[1])
+    if 0 <= pr < g_size and 0 <= pc < g_size:
+        obs[0, pr, pc] = 1.00
+
+    terrain = np.asarray(session.terrain, dtype=np.int32)
+    territory = np.asarray(session.territory, dtype=np.int32)
+
+    obs[1] = (terrain == 0).astype(np.float32)
+
+    for r in range(g_size):
+        for c in range(g_size):
+            if hasattr(session, "_effective_tile_yield"):
+                obs[2, r, c] = float(session._effective_tile_yield(r, c))
+            else:
+                obs[2, r, c] = float(TILE_VALUES.get(int(terrain[r, c]), 0.00))
+
+            if terrain[r, c] != 0:
+                passable_nb = 0
+                for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < g_size and 0 <= nc < g_size and terrain[nr, nc] != 0:
+                        passable_nb += 1
+                if passable_nb <= 2:
+                    obs[3, r, c] = 1.00
+                elif passable_nb == 3:
+                    obs[3, r, c] = 0.40
+
+    obs[4] = (territory == f).astype(np.float32)
+    obs[5] = ((territory != 0) & (territory != f)).astype(np.float32)
+    obs[6] = (territory == 0).astype(np.float32)
+
+    factions_dict = getattr(session, "factions", {})
+    for fk, fd in factions_dict.items():
+        if not fd.get("alive", False):
+            continue
+        cr, cc = fd["castle_pos"]
+        c_hp_norm = float(fd.get("castle_hp", 0.00)) / float(CASTLE_MAX_HP)
+        if int(fk) == f:
+            obs[7, cr, cc] = c_hp_norm
+        else:
+            obs[8, cr, cc] = c_hp_norm
+
+    ally_fp = np.zeros((g_size, g_size), dtype=np.float32)
+    enemy_fp = np.zeros((g_size, g_size), dtype=np.float32)
+
+    structs_dict = getattr(session, "structs", {})
+    for (sr, sc), st in structs_dict.items():
+        st_owner = int(getattr(st, "owner", 0))
+        st_type = int(getattr(st, "s_type", 1))
+        st_hp = float(getattr(st, "hp", 0.00))
+        if st_owner == f:
+            obs[7, sr, sc] = st_hp / 10.00
+        elif st_owner != 0:
+            obs[8, sr, sc] = st_hp / 10.00
+
+        if st_type == 1:
+            t_dmg = float(STRUCT_STATS[1]["dmg"])
+            target_fp = ally_fp if st_owner == f else enemy_fp
+            for dr, dc in RELATIVE_OFFSETS:
+                if abs(dr) + abs(dc) <= 2:
+                    nr, nc = sr + dr, sc + dc
+                    if 0 <= nr < g_size and 0 <= nc < g_size:
+                        target_fp[nr, nc] += t_dmg
+
+    type_to_ch = {"worker": 0, "warrior": 1, "archer": 2}
+    units_dict = getattr(session, "units", {})
+    for (ur, uc), u in units_dict.items():
+        u_fac = int(getattr(u, "faction", 0))
+        u_type = str(getattr(u, "u_type", "worker"))
+        u_hp = float(getattr(u, "hp", 1.00))
+        u_max = float(UNIT_STATS.get(u_type, {"max_hp": 4.00})["max_hp"])
+        ch_off = type_to_ch.get(u_type, 0)
+        if u_fac == f:
+            obs[9 + ch_off, ur, uc] = u_hp / u_max
+        else:
+            obs[12 + ch_off, ur, uc] = u_hp / u_max
+
+        u_rng = int(UNIT_STATS.get(u_type, {"atk_range": 1})["atk_range"])
+        u_dmg = float(UNIT_STATS.get(u_type, {"dmg": 1.00})["dmg"])
+        target_fp = ally_fp if u_fac == f else enemy_fp
+        for dr, dc in RELATIVE_OFFSETS:
+            if abs(dr) + abs(dc) <= u_rng:
+                nr, nc = ur + dr, uc + dc
+                if 0 <= nr < g_size and 0 <= nc < g_size:
+                    target_fp[nr, nc] += u_dmg
+
+    obs[15] = np.clip(ally_fp / 10.00, 0.00, 1.00)
+    obs[16] = np.clip(enemy_fp / 10.00, 0.00, 1.00)
+
+    my_gold = float(factions_dict.get(f, {}).get("gold", 0.00))
+    obs[17, :, :] = min(1.00, my_gold / float(MAX_GOLD))
+
+    if f == 2:
+        obs = obs[:, ::-1, ::-1].copy()
+    elif f == 3:
+        obs = obs[:, ::-1, :].copy()
+    elif f == 4:
+        obs = obs[:, :, ::-1].copy()
+    return obs
+
 
 class AIStrategistMixin:
     def _compute_firepower_maps(self, faction: int):
