@@ -13,6 +13,9 @@ let chartInstance = null;
 let boardInitializedForMatch = false;
 let pendingBuildType = null;
 let towerFireArmed = false;
+let simDelaySec = 0.50;
+let simStepInFlight = false;
+let simLoopTimeout = null;
 
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
@@ -134,6 +137,16 @@ canvas.addEventListener("mousedown", e => {
     const c = Math.floor((pos.x - camX) / cellSize);
     const r = Math.floor((pos.y - camY) / cellSize);
     if (r >= 0 && r < 18 && c >= 0 && c < 18) {
+      if (state && state.is_simulation) {
+        if (state.selected_pos && state.selected_pos[0] === r && state.selected_pos[1] === c) {
+          state.selected_pos = null;
+          updateUI();
+        } else {
+          simAction("select_tile", r, c);
+        }
+        return;
+      }
+
       if (pendingBuildType) {
         const bTiles = getActiveBuildTiles();
         if (isTileInList(r, c, bTiles)) {
@@ -175,6 +188,10 @@ canvas.addEventListener("mousedown", e => {
 
 window.addEventListener("mouseup", e => {
   if (isPanning && e.button === 2 && !panMoved) {
+    if (state && state.is_simulation) {
+      isPanning = false;
+      return;
+    }
     const pos = getCanvasCoords(e);
     const c = Math.floor((pos.x - camX) / cellSize);
     const r = Math.floor((pos.y - camY) / cellSize);
@@ -296,6 +313,17 @@ canvas.addEventListener("touchend", e => {
     const c = Math.floor((pos.x - camX) / cellSize);
     const r = Math.floor((pos.y - camY) / cellSize);
     if (r >= 0 && r < 18 && c >= 0 && c < 18) {
+      if (state && state.is_simulation) {
+        if (state.selected_pos && state.selected_pos[0] === r && state.selected_pos[1] === c) {
+          state.selected_pos = null;
+          updateUI();
+        } else {
+          simAction("select_tile", r, c);
+        }
+        touchMode = null;
+        return;
+      }
+
       if (pendingBuildType) {
         const bTiles = getActiveBuildTiles();
         if (isTileInList(r, c, bTiles)) {
@@ -374,9 +402,17 @@ function applyStaticLabels(t) {
   document.getElementById("lbl-box-telemetry").textContent = t.boxTelemetry;
   document.getElementById("lbl-box-inspector").textContent = t.boxInspector;
   document.getElementById("b-stats").textContent = t.btnStats;
+  document.getElementById("b-sim-stats").textContent = t.btnStats;
   document.getElementById("b-end").textContent = t.btnEnd;
   document.getElementById("b-surrender").textContent = t.btnSurrender || "Surrender";
   document.getElementById("b-backlobby").textContent = t.btnBackLobby || "Leave";
+
+  document.getElementById("lbl-sim-box-title").textContent = t.simBoxTitle || "AI vs AI SIMULATION CONTROL";
+  document.getElementById("btn-sim-prev").textContent = t.simStepPrev || "⏮ Prev Step";
+  document.getElementById("btn-sim-next").textContent = t.simStepNext || "⏭ Next Step";
+  document.getElementById("lbl-sim-delay").textContent = t.simDelayLabel || "Step Delay (sec, 0 = instant):";
+  document.getElementById("lbl-sim-skip-evo").textContent = t.simSkipEvoWait || "Start next match immediately";
+  document.getElementById("b-sim-stop").textContent = t.simStopBtn || "⏹ Stop Simulation";
 
   document.getElementById("lbl-modal-title").textContent = t.modalTitle;
   document.getElementById("btn-modal-close").textContent = t.btnClose;
@@ -391,6 +427,12 @@ function renderFactionsGrid() {
   if (!state || !state.ui_text) return;
   const t = state.ui_text;
   const factions = state.factions || {};
+  const isSim = Boolean(state.is_simulation);
+  const gridEl = document.getElementById("factions-telemetry-grid");
+  if (gridEl) {
+    gridEl.className = isSim ? "factions-grid-4 sim-grid-2" : "factions-grid-4";
+  }
+
   const barColors = {
     1: "linear-gradient(90deg, #eb3b5a, #ff6b81)",
     2: "linear-gradient(90deg, #0fbcf9, #4bcffa)",
@@ -402,6 +444,12 @@ function renderFactionsGrid() {
     const card = document.getElementById(`f-card-${f}`);
     if (!card) continue;
 
+    if (isSim && f > 2) {
+      card.style.display = "none";
+      continue;
+    }
+    card.style.display = "flex";
+
     const fd = factions[String(f)];
     if (!fd) {
       card.className = `faction-square f-theme-${f} empty-slot`;
@@ -409,7 +457,7 @@ function renderFactionsGrid() {
       continue;
     }
 
-    const isMe = (f === state.my_faction);
+    const isMe = (!isSim && f === state.my_faction);
     const isTurn = (f === state.current_turn_faction && !state.match_finished && fd.alive);
     let classes = `faction-square f-theme-${f}`;
     if (isTurn) classes += " active-turn";
@@ -471,8 +519,8 @@ function renderInspectorPanel() {
   if (!state.selected_pos) {
     const emptyTitle = isUk ? "Об'єкт не обрано" : "No Object Selected";
     const emptySub = isUk
-      ? "Натисніть ЛКМ (або тапніть) по будь-якій клітинці, юніту, вежі, казармі чи замку, щоб переглянути детальні характеристики та відкрити панель наказів."
-      : "Left-click (or tap) any tile, unit, tower, barracks, or castle to inspect detailed statistics and open the tactical command dock.";
+      ? "Натисніть ЛКМ (або тапніть) по будь-якій клітинці, юніту, вежі, казармі чи замку, щоб переглянути детальні характеристики."
+      : "Left-click (or tap) any tile, unit, tower, barracks, or castle to inspect detailed statistics.";
     cont.innerHTML = `
       <div class="insp-empty-state">
         <div class="insp-empty-icon">${DOCK_ICONS.land}</div>
@@ -741,7 +789,7 @@ function renderActionDock() {
   const dockEl = document.getElementById("unit-action-dock");
   if (!dockEl) return;
 
-  if (!state || state.screen !== "game" || !state.selected_pos || !state.inspector || !state.ui_text) {
+  if (!state || state.screen !== "game" || state.is_simulation || !state.selected_pos || !state.inspector || !state.ui_text) {
     dockEl.classList.add("hidden");
     dockEl.innerHTML = "";
     return;
@@ -921,11 +969,69 @@ function renderActionDock() {
   dockEl.classList.remove("hidden");
 }
 
-function aiSimulationPlaceholder() {
-  const msg = currentLang === "uk"
-    ? "Режим автономної ШІ Симуляції буде додано в наступному оновленні!"
-    : "Autonomous AI Simulation mode is coming in a future update!";
-  alert(msg);
+function clearSimLoop() {
+  if (simLoopTimeout) {
+    clearTimeout(simLoopTimeout);
+    simLoopTimeout = null;
+  }
+}
+
+function scheduleNextSimStep() {
+  clearSimLoop();
+  if (!state || !state.is_simulation || state.sim_paused) return;
+  const waitMs = state.sim_waiting_for_evo
+    ? 750
+    : Math.max(40, Math.round(simDelaySec * 1000.0));
+  simLoopTimeout = setTimeout(async () => {
+    if (!state || !state.is_simulation || state.sim_paused || simStepInFlight) return;
+    await simAction("auto_step");
+  }, waitMs);
+}
+
+async function startAiSimulation() {
+  boardInitializedForMatch = false;
+  pendingBuildType = null;
+  towerFireArmed = false;
+  await simAction("start");
+}
+
+async function simAction(action_type, r = null, c = null, param = null) {
+  if (!currentUser) return;
+  if (action_type === "auto_step" && simStepInFlight) return;
+  simStepInFlight = true;
+  try {
+    const res = await fetch("/api/simulation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: currentUser, action_type, r, c, param })
+    });
+    state = await res.json();
+    if (state.lang) currentLang = state.lang;
+    updateUI();
+  } catch (err) {
+    console.error("Simulation action error:", err);
+  } finally {
+    simStepInFlight = false;
+    if (state && state.is_simulation && !state.sim_paused) {
+      scheduleNextSimStep();
+    } else {
+      clearSimLoop();
+    }
+  }
+}
+
+function updateSimDelay(val) {
+  let num = parseFloat(val);
+  if (isNaN(num) || num < 0.0) num = 0.0;
+  if (num > 10.0) num = 10.0;
+  simDelaySec = num;
+  if (state && state.is_simulation && !state.sim_paused) {
+    scheduleNextSimStep();
+  }
+}
+
+function toggleSimSkipEvo(checked) {
+  simAction("set_skip_evo_wait", null, null, checked ? "1" : "0");
 }
 
 async function initApp() {
@@ -975,7 +1081,11 @@ async function submitAuth(mode) {
 }
 
 async function logoutUser() {
+  clearSimLoop();
   if (currentUser) {
+    if (state && state.is_simulation) {
+      await simAction("stop");
+    }
     await roomAction("leave");
   }
   currentUser = "";
@@ -991,6 +1101,7 @@ async function toggleLanguage() {
 
 async function fetchState() {
   if (!currentUser) return;
+  if (state && state.is_simulation && !state.sim_paused) return;
   try {
     const res = await fetch("/api/state", {
       method: "POST",
@@ -1098,8 +1209,11 @@ function updateUI() {
   const lobbyPanel = document.getElementById("lobby-panel");
   const roomLobbyPanel = document.getElementById("room-lobby-panel");
   const gamePanel = document.getElementById("game-control-panel");
+  const simBox = document.getElementById("sim-control-box");
+  const humanFooter = document.getElementById("human-footer-buttons");
 
   if (screen === "lobby") {
+    clearSimLoop();
     appCont.className = "mode-menu";
     lobbyPanel.style.display = "grid";
     roomLobbyPanel.style.display = "none";
@@ -1128,6 +1242,7 @@ function updateUI() {
       }
     }
   } else if (screen === "room_lobby") {
+    clearSimLoop();
     appCont.className = "mode-menu";
     lobbyPanel.style.display = "none";
     roomLobbyPanel.style.display = "flex";
@@ -1188,23 +1303,79 @@ function updateUI() {
       pendingBuildType = null;
     }
 
+    const isSim = Boolean(state.is_simulation);
     const bannerEl = document.getElementById("turn-status-banner");
-    if (state.match_finished) {
-      bannerEl.className = "turn-banner turn-finished";
-      bannerEl.textContent = `${t.matchFinishedBanner}${state.winner_name || ("F" + state.winner_faction)}`;
-    } else if (state.my_alive === false) {
-      bannerEl.className = "turn-banner turn-dead";
-      bannerEl.textContent = t.eliminatedBanner;
-    } else if (state.is_my_turn) {
-      bannerEl.className = "turn-banner turn-my";
-      bannerEl.textContent = t.yourTurnBanner;
-    } else {
-      bannerEl.className = "turn-banner turn-wait";
-      bannerEl.textContent = `${t.waitingTurnBanner}${state.current_turn_user} (F${state.current_turn_faction})`;
-    }
 
-    document.getElementById("telemetry-text").textContent =
-      `${t.turnLabel}: ${state.turn}/${state.max_turns} | ${t.winrateLabel}: ${state.winrate.toFixed(2)}%`;
+    if (isSim) {
+      simBox.style.display = "flex";
+      humanFooter.style.display = "none";
+
+      if (state.sim_waiting_for_evo) {
+        bannerEl.className = "turn-banner turn-finished";
+        bannerEl.textContent = t.simWaitingEvoBanner || "🧬 ANALYZING MATCH & EVOLVING NEW MODEL...";
+      } else if (state.sim_paused) {
+        bannerEl.className = "turn-banner turn-wait";
+        bannerEl.textContent = `${t.simPausedBanner || "⏸ SIMULATION PAUSED"} (${state.sim_cursor + 1}/${state.sim_history_len})`;
+      } else if (state.match_finished) {
+        bannerEl.className = "turn-banner turn-finished";
+        bannerEl.textContent = `${t.matchFinishedBanner}${state.winner_name || ("F" + state.winner_faction)}`;
+      } else {
+        bannerEl.className = "turn-banner turn-my";
+        bannerEl.textContent = `${t.simActiveBanner || "🤖 AI SIMULATION — TURN: "}F${state.current_turn_faction} (${state.current_turn_user})`;
+      }
+
+      const wr1 = state.sim_f1_winrate !== undefined ? state.sim_f1_winrate : 50.0;
+      const wr2 = state.sim_f2_winrate !== undefined ? state.sim_f2_winrate : 50.0;
+      const wrBalanced = (wr1 >= 40.0 && wr1 <= 60.0);
+      const wrCol = wrBalanced ? "val-pos" : "val-gold";
+      const isUk = (currentLang === "uk");
+
+      document.getElementById("sim-balance-summary").innerHTML =
+        `<div><b>${isUk ? "Партій" : "Matches"}:</b> ${state.sim_matches || 0} &nbsp;|&nbsp; <b>${isUk ? "Крок" : "Step"}:</b> ${(state.sim_cursor || 0) + 1} / ${state.sim_history_len || 1}</div>` +
+        `<div><b>F1:</b> ${state.sim_f1_wins || 0} W (<span class="${wrCol}">${wr1.toFixed(2)}%</span>, x${(state.sim_f1_comp || 1.0).toFixed(2)}) &nbsp;|&nbsp; <b>F2:</b> ${state.sim_f2_wins || 0} W (<span class="${wrCol}">${wr2.toFixed(2)}%</span>, x${(state.sim_f2_comp || 1.0).toFixed(2)})</div>`;
+
+      document.getElementById("btn-sim-prev").disabled = (state.sim_cursor <= 0);
+      document.getElementById("btn-sim-pause").textContent = state.sim_paused
+        ? (t.simStepResume || "▶ Resume")
+        : (t.simStepPause || "⏸ Pause");
+
+      const skipChk = document.getElementById("sim-skip-evo-chk");
+      if (skipChk && state.sim_skip_evo_wait !== undefined) {
+        skipChk.checked = Boolean(state.sim_skip_evo_wait);
+      }
+
+      document.getElementById("telemetry-text").textContent =
+        `${t.turnLabel}: ${state.turn}/${state.max_turns} | F1 WR: ${wr1.toFixed(2)}%`;
+
+      if (!state.sim_paused && !simStepInFlight) {
+        scheduleNextSimStep();
+      }
+    } else {
+      clearSimLoop();
+      simBox.style.display = "none";
+      humanFooter.style.display = "flex";
+
+      if (state.match_finished) {
+        bannerEl.className = "turn-banner turn-finished";
+        bannerEl.textContent = `${t.matchFinishedBanner}${state.winner_name || ("F" + state.winner_faction)}`;
+      } else if (state.my_alive === false) {
+        bannerEl.className = "turn-banner turn-dead";
+        bannerEl.textContent = t.eliminatedBanner;
+      } else if (state.is_my_turn) {
+        bannerEl.className = "turn-banner turn-my";
+        bannerEl.textContent = t.yourTurnBanner;
+      } else {
+        bannerEl.className = "turn-banner turn-wait";
+        bannerEl.textContent = `${t.waitingTurnBanner}${state.current_turn_user} (F${state.current_turn_faction})`;
+      }
+
+      document.getElementById("telemetry-text").textContent =
+        `${t.turnLabel}: ${state.turn}/${state.max_turns} | ${t.winrateLabel}: ${state.winrate.toFixed(2)}%`;
+
+      const turnActive = state.is_my_turn && !state.match_finished && state.my_alive !== false;
+      document.getElementById("b-end").disabled = !turnActive;
+      document.getElementById("b-surrender").disabled = state.match_finished || state.my_alive === false;
+    }
 
     document.getElementById("gen-live-badge").textContent =
       `${t.activeGenPrefix}: ${state.active_gen_label} | ${t.ratingLabel}: ${state.active_rating.toFixed(2)}`;
@@ -1223,11 +1394,6 @@ function updateUI() {
 
     renderFactionsGrid();
     renderInspectorPanel();
-
-    const turnActive = state.is_my_turn && !state.match_finished && state.my_alive !== false;
-    document.getElementById("b-end").disabled = !turnActive;
-    document.getElementById("b-surrender").disabled = state.match_finished || state.my_alive === false;
-
     renderActionDock();
   }
 
@@ -1417,7 +1583,7 @@ function drawBoard() {
     }
   }
 
-  if (!pendingBuildType) {
+  if (!pendingBuildType && !state.is_simulation) {
     for (const [mr, mc] of state.valid_moves) {
       const x = ox + mc * cs, y = oy + mr * cs;
       ctx.strokeStyle = "#f1c40f";
@@ -1438,7 +1604,7 @@ function drawBoard() {
     }
   }
 
-  if (pendingBuildType) {
+  if (pendingBuildType && !state.is_simulation) {
     const bTiles = getActiveBuildTiles();
     for (const [br, bc] of bTiles) {
       drawStructurePreviewIcon(ox + bc * cs, oy + br * cs, cs, pendingBuildType);

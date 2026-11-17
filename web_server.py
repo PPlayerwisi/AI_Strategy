@@ -18,6 +18,7 @@ import uvicorn
 import game_config as cfg
 import ai_pool
 import ai_strategist
+from ai_simulation import SimulationManager
 
 GRID_SIZE = getattr(cfg, "GRID_SIZE", 18)
 MAX_STEPS = getattr(cfg, "MAX_STEPS", getattr(cfg, "MAX_TURNS", 300))
@@ -910,7 +911,7 @@ class GameSession:
                 self.units[(sr, sc)] = Unit(sr, sc, faction, u_type, ready=False)
                 self.territory[sr, sc] = faction
                 self._record_human_sample_if_valid(faction, 0, MIN_TRAINING_EFFICIENCY)
-                u_name = tr(lang, "units", u_type)
+                u_name = tr(lang, "units", u.u_type)
                 self._log(tr(lang, "messages", "player_spawn", unit=u_name))
                 self._recompute_selection(faction)
 
@@ -1336,6 +1337,7 @@ class GameSession:
 
         return clean_for_json({
             "screen": "game",
+            "is_simulation": False,
             "username": username,
             "lang": lang,
             "base_rating": round(float(prof.get("base_rating", PLAYER_INITIAL_RATING)), 2),
@@ -1474,6 +1476,15 @@ class RoomManager:
         prof = UserProfileManager.get_profile(username)
         lang_code = lang or prof.get("lang", "en")
 
+        sim_state = SimulationManager.get_user_state(
+            username=username,
+            base_rating=float(prof.get("base_rating", PLAYER_INITIAL_RATING)),
+            ui_text=load_locale(lang_code).get("ui", {}),
+            lang=lang_code
+        )
+        if sim_state is not None:
+            return clean_for_json(sim_state)
+
         rid = RoomManager.user_to_room.get(username)
         if not rid or rid not in RoomManager.rooms:
             rooms_list = []
@@ -1490,6 +1501,7 @@ class RoomManager:
                 })
             return clean_for_json({
                 "screen": "lobby",
+                "is_simulation": False,
                 "username": username,
                 "lang": lang_code,
                 "base_rating": round(float(prof.get("base_rating", PLAYER_INITIAL_RATING)), 2),
@@ -1510,6 +1522,7 @@ class RoomManager:
         filled_cnt = sum(1 for s in rm.slots if s["kind"] != "empty")
         return clean_for_json({
             "screen": "room_lobby",
+            "is_simulation": False,
             "username": username,
             "lang": lang_code,
             "base_rating": round(float(prof.get("base_rating", PLAYER_INITIAL_RATING)), 2),
@@ -1602,6 +1615,7 @@ def api_rooms(payload: RoomActionPayload):
     lang = prof.get("lang", "en")
 
     with ROOMS_LOCK:
+        SimulationManager.stop_for_user(uname)
         act = payload.action
         if act == "create":
             RoomManager._remove_user_from_room_unlocked(uname)
@@ -1712,6 +1726,17 @@ def api_rooms(payload: RoomActionPayload):
         st = RoomManager.build_user_state(uname, lang=lang)
     return {"ok": True, "state": st}
 
+@app.post("/api/simulation")
+def api_simulation(payload: ActionPayload):
+    uname = payload.username.strip()
+    prof = UserProfileManager.get_profile(uname)
+    lang = prof.get("lang", "en")
+    with ROOMS_LOCK:
+        if payload.action_type == "start":
+            RoomManager._remove_user_from_room_unlocked(uname, is_disconnect=False)
+        SimulationManager.handle_action(uname, payload.action_type, r=payload.r, c=payload.c, param=payload.param)
+        return RoomManager.build_user_state(uname, lang=lang)
+
 
 @app.post("/api/state")
 def api_state(payload: ActionPayload):
@@ -1734,6 +1759,10 @@ def api_action(payload: ActionPayload):
         UserProfileManager.update_profile(uname, prof)
 
     with ROOMS_LOCK:
+        if SimulationManager.has_active(uname):
+            SimulationManager.handle_action(uname, payload.action_type, r=payload.r, c=payload.c)
+            return RoomManager.build_user_state(uname, lang=lang)
+
         RoomManager.touch_user(uname)
         rid = RoomManager.user_to_room.get(uname)
         if not rid or rid not in RoomManager.rooms:
@@ -1741,7 +1770,7 @@ def api_action(payload: ActionPayload):
         rm = RoomManager.rooms[rid]
         if rm.status != "playing" or not rm.session:
             return RoomManager.build_user_state(uname, lang=lang)
-        my_slot = next((s for s in rm.slots if s["kind"] == "human" and s["username"] == uname), None)
+        my_slot = next((s for s in rm.slots if s["kind"] == "human" and s["username"] == username), None)
         my_faction = my_slot["faction"] if my_slot else 2
         st = rm.session.apply_player_action(
             faction=my_faction,
@@ -1763,6 +1792,7 @@ async def api_leave_beacon(request: Request):
         uname = str(data.get("username", "")).strip()
         if uname:
             with ROOMS_LOCK:
+                SimulationManager.stop_for_user(uname)
                 RoomManager._remove_user_from_room_unlocked(uname, is_disconnect=True)
     except Exception:
         pass
