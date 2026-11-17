@@ -1015,15 +1015,6 @@
       "created_at": 1794921702
     },
     {
-      "gen_id": "gen_evo_124_1794923418",
-      "label": "Gen-124-H (AI_Sim)",
-      "filename": "generation_human_124_62.zip",
-      "rating": 61.5,
-      "origin": "player:AI_Sim",
-      "doctrine_alignment": 92.79,
-      "created_at": 1794923418
-    },
-    {
       "gen_id": "gen_evo_125_1794923986",
       "label": "Gen-125-H (AI_Sim)",
       "filename": "generation_human_125_60.zip",
@@ -1031,6 +1022,15 @@
       "origin": "player:AI_Sim",
       "doctrine_alignment": 92.8,
       "created_at": 1794923986
+    },
+    {
+      "gen_id": "gen_evo_126_1794924576",
+      "label": "Gen-126-H (AI_Sim)",
+      "filename": "generation_human_126_62.zip",
+      "rating": 62.2,
+      "origin": "player:AI_Sim",
+      "doctrine_alignment": 92.16,
+      "created_at": 1794924576
     }
   ]
 }
