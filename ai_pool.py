@@ -57,8 +57,8 @@ class ModelCache:
             self.cache.pop(norm_path, None)
 
 
-GLOBAL_MODEL_CACHE = ModelCache(max_size=3
-EVOLUTION_LOCK = threading.Lock())
+GLOBAL_MODEL_CACHE = ModelCache(max_size=3)
+EVOLUTION_LOCK = threading.Lock()
 
 
 class PoolRegistry:
