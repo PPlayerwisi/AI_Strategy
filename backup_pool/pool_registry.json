@@ -1004,6 +1004,15 @@
       "origin": "player:AI_Sim",
       "doctrine_alignment": 91.74,
       "created_at": 1794921372
+    },
+    {
+      "gen_id": "gen_evo_123_1794921702",
+      "label": "Gen-123-H (AI_Sim)",
+      "filename": "generation_human_123_70.zip",
+      "rating": 69.56,
+      "origin": "player:AI_Sim",
+      "doctrine_alignment": 92.26,
+      "created_at": 1794921702
     }
   ]
 }
