@@ -47,7 +47,7 @@ class SimulationSession:
         try:
             with open(SIM_PERSIST_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            u_data = data.get(self.username)
+            u_data = data.get(self.username) or data.get("_global")
             if isinstance(u_data, dict):
                 self.matches_played = int(u_data.get("matches_played", 0))
                 self.f1_wins = int(u_data.get("f1_wins", 0))
@@ -69,7 +69,7 @@ class SimulationSession:
                         data = json.load(f)
                 except Exception:
                     data = {}
-            data[self.username] = {
+            payload = {
                 "matches_played": int(self.matches_played),
                 "f1_wins": int(self.f1_wins),
                 "f2_wins": int(self.f2_wins),
@@ -78,10 +78,17 @@ class SimulationSession:
                 "skip_evo_wait": bool(self.skip_evo_wait),
                 "step_delay": round(float(self.step_delay), 2)
             }
+            data[self.username] = payload
+            data["_global"] = payload
             tmp_path = SIM_PERSIST_FILE + ".tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
             os.replace(tmp_path, SIM_PERSIST_FILE)
+            try:
+                from cloud_backup import CloudBackupManager
+                CloudBackupManager.sync_sim_persist_async()
+            except Exception:
+                pass
         except Exception:
             pass
 

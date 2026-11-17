@@ -10,6 +10,7 @@ from game_config import (
     POOL_DIR, HUMAN_TELEMETRY_FILE, POOL_REGISTRY_FILE, USERS_DB_FILE
 )
 
+SIM_PERSIST_FILE = os.path.join(POOL_DIR, "sim_persist.json")
 BACKUP_LOCK = threading.Lock()
 
 
@@ -178,7 +179,7 @@ class CloudBackupManager:
             local_target = os.path.join(POOL_DIR, fname)
             should_download = (
                 not os.path.exists(local_target)
-                or fname in ("users_db.json", "pool_registry.json", "human_telemetry.npz")
+                or fname in ("users_db.json", "pool_registry.json", "human_telemetry.npz", "sim_persist.json")
             )
             if not should_download:
                 continue
@@ -292,6 +293,17 @@ class CloudBackupManager:
         threading.Thread(target=_worker, daemon=True).start()
 
     @staticmethod
+    def sync_sim_persist_async():
+        def _worker():
+            if os.path.exists(SIM_PERSIST_FILE):
+                CloudBackupManager.upload_file_to_github(
+                    SIM_PERSIST_FILE,
+                    "backup_pool/sim_persist.json",
+                    commit_msg="Sync AI simulation winrate counters"
+                )
+        threading.Thread(target=_worker, daemon=True).start()
+
+    @staticmethod
     def backup_new_generation_async(entry: dict, model_zip_path: str):
         def _worker():
             label = entry.get("label", "Gen-Unknown")
@@ -326,6 +338,12 @@ class CloudBackupManager:
                     USERS_DB_FILE,
                     "backup_pool/users_db.json",
                     commit_msg="Update user profiles"
+                )
+            if os.path.exists(SIM_PERSIST_FILE):
+                CloudBackupManager.upload_file_to_github(
+                    SIM_PERSIST_FILE,
+                    "backup_pool/sim_persist.json",
+                    commit_msg="Update simulation match counters"
                 )
             if os.path.exists(HUMAN_TELEMETRY_FILE):
                 CloudBackupManager.upload_file_to_github(

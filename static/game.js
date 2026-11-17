@@ -1685,17 +1685,37 @@ function openStatsModal() {
   }
 
   document.getElementById("stats-summary").innerHTML = summaryParts.join(" &nbsp;|&nbsp; ");
+  const labels = st.turns.map(turnNum => `${t.chartTurn} ${turnNum}`);
 
-  if (chartInstance) chartInstance.destroy();
+  if (chartInstance) {
+    chartInstance.data.labels = labels;
+    chartInstance.data.datasets = datasets;
+    chartInstance.update("none");
+    return;
+  }
+
   const cctx = document.getElementById("effChart").getContext("2d");
   chartInstance = new Chart(cctx, {
     type: "line",
     data: {
-      labels: st.turns.map(turnNum => `${t.chartTurn} ${turnNum}`),
+      labels: labels,
       datasets: datasets
     },
     options: {
       responsive: true,
+      animation: false,
+      animations: {
+        colors: false,
+        x: false,
+        y: false
+      },
+      transitions: {
+        active: {
+          animation: {
+            duration: 0
+          }
+        }
+      },
       plugins: { legend: { labels: { color: "#fff", boxWidth: 14, font: { size: 11 } } } },
       scales: {
         x: { ticks: { color: "#c8d6e5" } },
@@ -1707,6 +1727,10 @@ function openStatsModal() {
 
 function closeStatsModal() {
   document.getElementById("modal-overlay").style.display = "none";
+  if (chartInstance) {
+    chartInstance.destroy();
+    chartInstance = null;
+  }
 }
 
 function openGuideModal() {
