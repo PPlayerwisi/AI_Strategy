@@ -1,7 +1,7 @@
 {
   "Danulo": {
-    "matches_played": 5,
-    "f1_wins": 1,
+    "matches_played": 6,
+    "f1_wins": 2,
     "f2_wins": 4,
     "f1_rating_anchor": 93.32,
     "f2_rating_anchor": 54.38,
@@ -9,8 +9,8 @@
     "step_delay": 0.5
   },
   "_global": {
-    "matches_played": 5,
-    "f1_wins": 1,
+    "matches_played": 6,
+    "f1_wins": 2,
     "f2_wins": 4,
     "f1_rating_anchor": 93.32,
     "f2_rating_anchor": 54.38,
