@@ -853,15 +853,6 @@
       "created_at": 1794572195
     },
     {
-      "gen_id": "gen_evo_106_1794573726",
-      "label": "Gen-106-H (Danulo)",
-      "filename": "generation_human_106_64.zip",
-      "rating": 64.09,
-      "origin": "player:Danulo",
-      "doctrine_alignment": 93.42,
-      "created_at": 1794573726
-    },
-    {
       "gen_id": "gen_evo_107_1794573726",
       "label": "Gen-106-H (Danulo)",
       "filename": "generation_human_106_64.zip",
@@ -1031,6 +1022,15 @@
       "origin": "player:AI_Sim",
       "doctrine_alignment": 93.34,
       "created_at": 1794924887
+    },
+    {
+      "gen_id": "gen_evo_126_1794926356",
+      "label": "Gen-126-H (AI_Sim)",
+      "filename": "generation_human_126_64.zip",
+      "rating": 64.17,
+      "origin": "player:AI_Sim",
+      "doctrine_alignment": 90.65,
+      "created_at": 1794926356
     }
   ]
 }
