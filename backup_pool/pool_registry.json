@@ -995,6 +995,15 @@
       "origin": "player:Danulo",
       "doctrine_alignment": 92.82,
       "created_at": 1794584938
+    },
+    {
+      "gen_id": "gen_evo_122_1794921372",
+      "label": "Gen-122-H (AI_Sim)",
+      "filename": "generation_human_122_83.zip",
+      "rating": 83.16,
+      "origin": "player:AI_Sim",
+      "doctrine_alignment": 91.74,
+      "created_at": 1794921372
     }
   ]
 }
